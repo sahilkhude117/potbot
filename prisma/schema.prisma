@@ -1,8 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
 
 generator client {
   provider = "prisma-client-js"
@@ -12,4 +7,92 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_DATABASE_URL")
 }
+
+model User {
+  id               String     @id @default(uuid())
+  telegramUserId   String     @unique
+  publicKey        String     @unique
+  privateKey       String     // will store in mpc later
+
+  potsCreated      Pot[]     @relation("AdminRelation")
+  potMemberships   Pot_Member[]   
+
+  createdAt        DateTime   @default(now())
+}
+
+model Pot {
+  id               String     @id @default(uuid())
+  name             String
+  telegramGroupId  String     @unique
+  vaultAddress     String     @unique
+
+  adminId          String
+  admin            User       @relation("AdminRelation", fields: [adminId], references: [id])
+
+  members          Pot_Member[]
+  trades           Trade[]
+  assets           Asset[]
+  createdAt        DateTime   @default(now())
+}
+
+model Pot_Member {
+  id               String     @id @default(uuid())
+  userId           String
+  potId            String
+  joinedAt         DateTime   @default(now())
+
+  role             Role       @default(MEMBER)
+  user             User       @relation(fields: [userId], references: [id])
+  pot              Pot        @relation(fields: [potId], references: [id])
+
+  tradesExecuted   Trade[]
+
+  @@unique([userId, potId]) // user can only join once per pot
+}
+
+enum Role {
+  ADMIN
+  TRADER
+  MEMBER
+}
+
+model Trade {
+  id               String      @id @default(uuid())
+  potId            String
+  pot              Pot         @relation(fields: [potId], references: [id])
+
+  traderId         String
+  trader           Pot_Member  @relation(fields: [traderId], references: [id])
+
+  inMint           String
+  inAmount         BigInt
+  outMint          String
+  outAmount        BigInt
+
+  txSignature      String      @unique
+
+  status           TradeStatus @default(PENDING)
+  createdAt        DateTime    @default(now())
+}
+
+model Asset {
+  id               String      @id @default(uuid())
+  potId            String
+  pot              Pot         @relation(fields: [potId], references: [id])
+
+  mintAddress      String
+  balance          BigInt
+
+  updatedAt        DateTime    @updatedAt
+
+  @@unique([potId, mintAddress])
+}
+
+enum TradeStatus {
+  COMPLETED
+  PENDING
+  FAILED
+}
+
