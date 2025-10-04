@@ -1,14 +1,11 @@
-import { Hono } from 'hono'
+import { Telegraf } from "telegraf";
 
-type Bindings = {
-  DATABASE_URL: string
-  JWT_SECRET: string
-}
+const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!)
 
-const app = new Hono<{ Bindings: Bindings }>();
-
-app.get('/', (c) => {
-  return c.text("Hello hono");
+bot.start((ctx) => {
+  ctx.reply("Swagat nahi kroge humara")
 })
 
-export default app
+bot.launch()
+
+console.log(`Bot Is Running`)

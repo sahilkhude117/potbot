@@ -1,17 +1,21 @@
 {
   "name": "potbot",
+  "module": "src/index.ts",
   "type": "module",
+  "private": true,
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy --minify",
-    "cf-typegen": "wrangler types --env-interface CloudflareBindings"
-  },
-  "dependencies": {
-    "@prisma/extension-accelerate": "^2.0.2",
-    "hono": "^4.9.9",
-    "prisma": "^6.16.3"
+    "dev": "bun run src/index.ts"
   },
   "devDependencies": {
-    "wrangler": "^4.4.0"
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.16.3",
+    "@prisma/extension-accelerate": "^2.0.2",
+    "prisma": "^6.16.3",
+    "telegraf": "^4.16.3"
   }
 }
