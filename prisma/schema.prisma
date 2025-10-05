@@ -27,6 +27,8 @@ model Pot {
   telegramGroupId  String     @unique
   vaultAddress     String     @unique
 
+  isGroupAdded     Boolean    @default(false)
+
   adminId          String
   admin            User       @relation("AdminRelation", fields: [adminId], references: [id])
 
