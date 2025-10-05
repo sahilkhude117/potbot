@@ -25,6 +25,7 @@ model Pot {
   id               String     @id @default(uuid())
   name             String
   telegramGroupId  String     @unique
+  inviteLink       String?
   vaultAddress     String     @unique
 
   isGroupAdded     Boolean    @default(false)

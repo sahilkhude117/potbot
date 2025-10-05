@@ -1,10 +1,11 @@
-import { Telegraf } from "telegraf";
+import { Markup, Telegraf } from "telegraf";
 import { prismaClient } from "./db/prisma";
-import { ADD_POTBOT_TO_GROUP, CREATE_NEW_POT, DEFAULT_KEYBOARD, SOLANA_POT_BOT } from "./keyboards/keyboards";
+import { ADD_POTBOT_TO_GROUP, CREATE_INVITE_DONE_KEYBOARD, CREATE_NEW_POT, DEFAULT_KEYBOARD, SOLANA_POT_BOT } from "./keyboards/keyboards";
 import { Keypair } from "@solana/web3.js";
 import { getBalanceMessage } from "./solana/getBalance";
 import { createMockVault } from "./solana/createVault";
 import { escapeMarkdownV2 } from "./lib/utils";
+import { Role } from "./generated/prisma";
 
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!)
 
@@ -51,9 +52,41 @@ bot.start(async (ctx) => {
           });
 
           await ctx.reply(`${ctx.chat.title} successfully connected to Pot!`);
+          await ctx.replyWithMarkdownV2(
+  `*Next Steps to Enable Full Bot Functionality:*\n\n` +
+  `1\\. *Make me an administrator* in the group with following permissions\\:\n` +
+  `\\- Manage messages\n` +
+  `\\- Delete messages\n` +
+  `\\- Invite users via link\n` +
+  `\\- Pin messages\n` +
+  `\\- Change group info\n\n` +
+  `3\\. After promotion, I will be able to help you moderate and run the Pot smoothly\\.\n\n` +
+  `_You can do this by opening the group info \\> Administrators \\> Add Admin \\> Select me and grant permissions_\n\n` +
+   `After you are done, *click the button below to test* and create the invite link\\.`, {
+    ...CREATE_INVITE_DONE_KEYBOARD
+   } 
+);
         }
       } else if (potWithTelegramGroup) {
-        await ctx.reply(`Hello how can i help you?`);
+        const hasInviteLink = !!potWithTelegramGroup.inviteLink;
+        if (hasInviteLink) {
+          await ctx.reply(`Hello how can i help you?`);
+        } else {
+          await ctx.replyWithMarkdownV2(
+  `*Hey\\! Looks like I am still just a member 😔 Please Enable Full Bot Functionality:*\n\n` +
+  `1\\. *Make me an administrator* in the group with following permissions\\:\n` +
+  `\\- Manage messages\n` +
+  `\\- Delete messages\n` +
+  `\\- Invite users via link\n` +
+  `\\- Pin messages\n` +
+  `\\- Change group info\n\n` +
+  `3\\. After promotion, I will be able to help you moderate and run the Pot smoothly\\.\n\n` +
+  `_You can do this by opening the group info \\> Administrators \\> Add Admin \\> Select me and grant permissions_\n\n` + 
+  `After you are done, *click the button below to test* and create the invite link\\.`, {
+    ...CREATE_INVITE_DONE_KEYBOARD
+  }
+);
+        }    
       } else {
         await ctx.reply(`The group is not attached to any pot`, {
             ...CREATE_NEW_POT
@@ -156,7 +189,7 @@ bot.action("create_pot", async (ctx) => {
       data: {
           name: "",
           adminId: existingUser.id,
-          telegramGroupId: `telegramGroupId_${ctx.from.id}`,
+          telegramGroupId: `telegramGroupId_${ctx.from.id}_${newVault.publicKey}`,
           vaultAddress: JSON.stringify(newVault),
           isGroupAdded: false
       }
@@ -184,10 +217,106 @@ bot.action("create_pot", async (ctx) => {
 
 
 bot.action("join_pot", async ctx => {
-  // show pots
-  // let user join one
+  const existingUser = await prismaClient.user.findFirst({
+    where: {
+      telegramUserId: ctx.from.id.toString()
+    }
+  })
+
+  const pots = await prismaClient.pot.findMany({
+    where: { 
+      isGroupAdded: true, 
+      inviteLink: { not: null },
+      members: {
+        none: { userId:  existingUser?.id }, // exclude pots where user is already a member
+      },
+    }, 
+    select: { id: true, name: true },
+  });
+
+  if (!pots.length) {
+    return ctx.reply("No active pots available right now.", {
+      ...DEFAULT_KEYBOARD
+    });
+  }
+
+  const buttons: any[][] = [];
+  for (let i = 0; i < pots.length; i += 2) {
+    const row = pots
+      .slice(i, i + 2)
+      .map((pot) => Markup.button.callback(pot.name || `Pot ${i + 1}`, `join_pot_${pot.id}`));
+    buttons.push(row);
+  }
+
+  await ctx.reply(
+    `*Here are the available pots:*`,
+    {
+      parse_mode: "MarkdownV2",
+      ...Markup.inlineKeyboard(buttons),
+    }
+  );
 })
 
+bot.action(/join_pot_(.+)/, async (ctx) => {
+  const potId = ctx.match[1];
+  const pot = await prismaClient.pot.findUnique({ where: { id: potId } });
+  const existingUser = await prismaClient.user.findFirst({
+    where: {
+      telegramUserId: ctx.from.id.toString()
+    }
+  });
+  const userId = existingUser?.id as string
+  const isAdmin = pot?.adminId == userId;
+
+  if (!pot) {
+    return ctx.reply("This pot no longer exists.");
+  }
+
+  const role = isAdmin ? "ADMIN" : "MEMBER";
+
+  const pot_member = await prismaClient.pot_Member.create({
+    data: {
+      potId: pot.id,
+      userId: userId,
+      role: role
+    }
+  })
+
+  await ctx.replyWithMarkdownV2(
+    `*GM GM\\!* \n\n` +
+    `You are now a proud member of the pot *${escapeMarkdownV2(pot.name)}* \n\n` +
+    `Join the Official Group from here: ${escapeMarkdownV2(pot.inviteLink as string)} \n\n` +
+    `Get ready to trade, grow, and earn together with your group\\.\n\n` +
+    `_Stay active — more features and rewards are coming soon\\!_`
+  );
+});
+
+
+bot.action("create_invite", async ctx => {
+  const inviteLink = await ctx.createChatInviteLink();
+  const telegramGroupId = ctx.chat?.id.toString();
+
+  try {
+    const pot = await prismaClient.pot.update({
+      where: {
+        telegramGroupId: telegramGroupId,
+      },
+      data : {
+        inviteLink: inviteLink.invite_link
+      }
+    })
+
+    ctx.reply(`Successful! I am the Promoted now 😎. Here is the Invite Link to add members to your pot: ${pot.inviteLink}`)
+  } catch (e) {
+    await ctx.reply("Opps! I am not admin yet 😔");
+    await ctx.replyWithMarkdownV2(
+  `*Please Enable Full Bot Functionality:*\n\n` +
+  `_You can do this by opening the group info \\> Administrators \\> Add Admin \\> Select me and grant permissions_\n\n` + 
+  `After you are done, *click the button below to test* and create the invite link\\.`, {
+    ...CREATE_INVITE_DONE_KEYBOARD
+  })
+  }
+})
 
 
 bot.launch()

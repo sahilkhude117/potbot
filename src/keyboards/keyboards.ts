@@ -19,3 +19,7 @@ export const CREATE_NEW_POT = Markup.inlineKeyboard([[
 export const SOLANA_POT_BOT = Markup.inlineKeyboard([[
     Markup.button.url("Go to Pot Bot", "https://t.me/solana_pot_bot")
 ]])
+
+export const CREATE_INVITE_DONE_KEYBOARD = Markup.inlineKeyboard([[
+    Markup.button.callback("Done", "create_invite")
+]])
