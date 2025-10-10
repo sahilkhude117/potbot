@@ -1,11 +1,11 @@
 import { Markup, Telegraf } from "telegraf";
 import { prismaClient } from "./db/prisma";
 import { ADD_POTBOT_TO_GROUP, CREATE_INVITE_DONE_KEYBOARD, CREATE_NEW_POT, DEFAULT_KEYBOARD, SOLANA_POT_BOT } from "./keyboards/keyboards";
-import { Keypair } from "@solana/web3.js";
+import { Keypair, PublicKey } from "@solana/web3.js";
 import { getBalanceMessage } from "./solana/getBalance";
 import { createMockVault } from "./solana/createVault";
-import { escapeMarkdownV2 } from "./lib/utils";
-import { Role } from "./generated/prisma";
+import { decodeSecretKey, escapeMarkdownV2 } from "./lib/utils";
+import { sendSol } from "./solana/depositToVault";
 
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!)
 
@@ -119,6 +119,78 @@ bot.start(async (ctx) => {
     }
     
 })
+
+bot.command('deposit', async ctx => {
+  try {
+    const existingUser = await prismaClient.user.findFirst({
+      where: {
+          telegramUserId: ctx.from?.id.toString(),
+      }
+    });
+
+    const pots = await prismaClient.pot.findMany({
+      where: { 
+        isGroupAdded: true, 
+        inviteLink: { not: null },
+        members: {
+          some: { userId: existingUser?.id }
+        }
+      }, 
+      select: { id: true, name: true },
+    });
+
+    if (!pots.length) {
+      return ctx.reply("No active pots available right now.", {
+        ...DEFAULT_KEYBOARD
+      });
+    }
+
+    const buttons: any[][] = [];
+    for (let i = 0; i < pots.length; i += 2) {
+      const row = pots
+        .slice(i, i + 2)
+        .map((pot) => Markup.button.callback(pot.name || `Pot ${i + 1}`, `deposit_to_pot_${pot.id}`));
+      buttons.push(row);
+    }
+
+    await ctx.reply(
+      `*Please Select a Pot to deposit*`,
+      {
+        parse_mode: "MarkdownV2",
+        ...Markup.inlineKeyboard(buttons),
+      }
+    );
+  } catch (error) {
+    await ctx.reply("Oops! Something came up")
+  }
+})
+
+bot.action(/deposit_to_pot_(.+)/, async (ctx) => {
+  const potId = ctx.match[1];
+  const pot = await prismaClient.pot.findUnique({ where: { id: potId } });
+  const existingUser = await prismaClient.user.findFirst({
+    where: {
+      telegramUserId: ctx.from.id.toString()
+    }
+  });
+  const userId = existingUser?.id as string
+
+  if (!pot) {
+    return ctx.reply("This pot no longer exists.");
+  }
+
+  const fromKeypair = Keypair.fromSecretKey(decodeSecretKey(existingUser?.privateKey as string));
+  const to = JSON.parse(pot.vaultAddress)
+  const toPublicKey = new PublicKey(to.publicKey)
+  const amount = 1;
+
+  const { message } = await sendSol(fromKeypair, toPublicKey, amount);
+
+  await ctx.replyWithMarkdownV2(
+    `*GM GM\\!* \n\n` +
+    `${escapeMarkdownV2(message)}`
+  );
+});
 
 bot.action("public_key", async ctx => {
     const existingUser = await prismaClient.user.findFirst({
@@ -381,6 +453,7 @@ bot.action(/show_pot_(.+)/, async (ctx) => {
     `Insights and portfolio loading soon`
   );
 });
+
 
 bot.launch()
 
