@@ -6,6 +6,8 @@ export const DEFAULT_KEYBOARD = Markup.inlineKeyboard([[
 ],[
     Markup.button.callback("Create Pot", "create_pot"),
     Markup.button.callback("Join Pot", "join_pot"),
+],[
+    Markup.button.callback("My Pots", "show_pots")
 ]]);
 
 export const ADD_POTBOT_TO_GROUP = Markup.inlineKeyboard([[

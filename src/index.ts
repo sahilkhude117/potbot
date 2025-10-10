@@ -132,7 +132,7 @@ bot.action("public_key", async ctx => {
 
       return ctx.reply(
         `Your public key is ${existingUser?.publicKey} ${empty ? "Fund your wallet to trade" : message}`, {
-                ...DEFAULT_KEYBOARD
+            ...DEFAULT_KEYBOARD
           }   
       );
     } else {
@@ -140,20 +140,20 @@ bot.action("public_key", async ctx => {
     }
 });
 
-// bot.action("private_key", async ctx => {
-//   const user = await prismaClient.user.findFirst({
-//       where: {
-//           telegramUserId: ctx.from?.id.toString()
-//       }
-//   })
+bot.action("private_key", async ctx => {
+  const user = await prismaClient.user.findFirst({
+      where: {
+          telegramUserId: ctx.from?.id.toString()
+      }
+  })
 
-// 	return ctx.reply(
-// 		`Your private key is ${user?.privateKey}`, {
-//             ...DEFAULT_KEYBOARD
-//         }
+	return ctx.reply(
+		`Your private key is ${user?.privateKey}`, {
+            ...DEFAULT_KEYBOARD
+        }
 		
-// 	);
-// });
+	);
+});
 
 bot.action("balance", async ctx => {
     const existingUser = await prismaClient.user.findFirst({
@@ -214,7 +214,6 @@ bot.action("create_pot", async (ctx) => {
   );
   }
 })
-
 
 bot.action("join_pot", async ctx => {
   const existingUser = await prismaClient.user.findFirst({
@@ -291,7 +290,6 @@ bot.action(/join_pot_(.+)/, async (ctx) => {
   );
 });
 
-
 bot.action("create_invite", async ctx => {
   const inviteLink = await ctx.createChatInviteLink();
   const telegramGroupId = ctx.chat?.id.toString();
@@ -318,6 +316,71 @@ bot.action("create_invite", async ctx => {
   }
 })
 
+bot.action("show_pots", async ctx => {
+  try {
+    const existingUser = await prismaClient.user.findFirst({
+      where: {
+          telegramUserId: ctx.from?.id.toString(),
+      }
+    });
+
+    const pots = await prismaClient.pot.findMany({
+      where: { 
+        isGroupAdded: true, 
+        inviteLink: { not: null },
+        members: {
+          some: { userId: existingUser?.id }
+        }
+      }, 
+      select: { id: true, name: true },
+    });
+
+    if (!pots.length) {
+      return ctx.reply("No active pots available right now.", {
+        ...DEFAULT_KEYBOARD
+      });
+    }
+
+    const buttons: any[][] = [];
+    for (let i = 0; i < pots.length; i += 2) {
+      const row = pots
+        .slice(i, i + 2)
+        .map((pot) => Markup.button.callback(pot.name || `Pot ${i + 1}`, `show_pot_${pot.id}`));
+      buttons.push(row);
+    }
+
+    await ctx.reply(
+      `*Here are the your pots:*`,
+      {
+        parse_mode: "MarkdownV2",
+        ...Markup.inlineKeyboard(buttons),
+      }
+    );
+  } catch (error) {
+    ctx.reply("Opps! Something came up")
+  }
+})
+
+bot.action(/show_pot_(.+)/, async (ctx) => {
+  const potId = ctx.match[1];
+  const pot = await prismaClient.pot.findUnique({ where: { id: potId } });
+  const existingUser = await prismaClient.user.findFirst({
+    where: {
+      telegramUserId: ctx.from.id.toString()
+    }
+  });
+  const userId = existingUser?.id as string
+
+  if (!pot) {
+    return ctx.reply("This pot no longer exists.");
+  }
+
+  await ctx.replyWithMarkdownV2(
+    `*GM GM\\!* \n\n` +
+    `You are now a proud member of the pot *${escapeMarkdownV2(pot.name)}* \n\n` + 
+    `Insights and portfolio loading soon`
+  );
+});
 
 bot.launch()
 
