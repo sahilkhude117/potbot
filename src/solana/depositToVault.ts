@@ -31,10 +31,12 @@ export async function sendSol(
         const txId = await connection.sendTransaction(transaction);
         console.log(`https://explorer.solana.com/tx/${txId}?cluster=devnet`);
         return {
+            success: true,
             message: `View Your Transaction here: https://explorer.solana.com/tx/${txId}?cluster=devnet`
         }
     } catch (error) {
         return {
+            success: false,
             message: "Oops! Error Sending Sol"
         }
     }
