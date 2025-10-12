@@ -430,6 +430,9 @@ bot.on(message('new_chat_members'), async (ctx) => {
         } 
       });
 
+      const isAdmin = pot?.adminId == existingUser.id;
+      const role = isAdmin ? "ADMIN" : "MEMBER";
+
       if (!pot) {
         return ctx.reply("This pot no longer exists.");
       }
@@ -450,7 +453,7 @@ bot.on(message('new_chat_members'), async (ctx) => {
           data: {
             potId: pot.id,
             userId: existingUser.id,
-            role: Role.MEMBER
+            role: role
           }
         })
         await ctx.reply(`👋 GM GM! ${member.first_name}! Glad to have you here.`);
@@ -471,6 +474,9 @@ bot.on(message('new_chat_members'), async (ctx) => {
         } 
       });
 
+      const isAdmin = pot?.adminId == newUser.id;
+      const role = isAdmin ? "ADMIN" : "MEMBER";
+
       if (!pot) {
         return ctx.reply("This pot no longer exists.");
       }
@@ -479,7 +485,7 @@ bot.on(message('new_chat_members'), async (ctx) => {
         data: {
           potId: pot.id,
           userId: newUser.id,
-          role: Role.MEMBER
+          role: role
         }
       })
 
