@@ -7,7 +7,7 @@ import { getBalanceMessage } from "../solana/getBalance";
 import type { BotContext, DepositWizardState } from "../lib/types";
 import { getPriceInUSD } from "../solana/getPriceInUSD";
 import { SOL_MINT } from "../lib/statits";
-import { getTokenDecimalsWithCache } from "../solana/getTokenDecimals";
+import { computePotValueInUSD } from "../solana/computePotValueInUSD";
 
 export const depositSolToVaultWizard = new Scenes.WizardScene<BotContext>(
     'deposit_sol_to_vault_wizard',
@@ -184,26 +184,32 @@ depositSolToVaultWizard.action("wizard_confirm_deposit", async (ctx) => {
             const { message, success } = await sendSol(fromKeypair, toPublicKey, amount);
 
             if (success) {
-                const mintedShares = await mintShares(
-                    potId,
-                    userId,
-                    BigInt(amount * LAMPORTS_PER_SOL),
-                );
-                const newShares = mintedShares.userNewShares;
-                const totalUserShares = mintedShares.sharesMinted;
-                const totalPotShares = mintedShares.newTotalShares;
+                try {
+                    const mintedShares = await mintSharesAndDeposit(
+                        potId,
+                        userId,
+                        BigInt(amount * LAMPORTS_PER_SOL),
+                    );
+                    const newShares = mintedShares.userNewShares;
+                    const totalUserShares = mintedShares.sharesMinted;
+                    const totalPotShares = mintedShares.newTotalShares;
 
-                const userPercentage = ((Number(totalUserShares) / Number(totalPotShares)) * 100).toFixed(2);
-                const newSharesPercentage = ((Number(newShares) / Number(totalPotShares)) * 100).toFixed(2);
-                await ctx.replyWithMarkdownV2(
-                    `✅ *Deposit successful\\!*\n\n` +
-                escapeMarkdownV2(
-                    `Details \n\n` + 
-                    `New Shares: ${totalUserShares} (${userPercentage}%)\n\n` +
-                    `Your Total Shares: ${newShares} (${newSharesPercentage}%) \n\n` +
-                    `Total Shares: ${totalPotShares} \n\n` +
-                    `${message}`
-                ));
+                    const userPercentage = ((Number(totalUserShares) / Number(totalPotShares)) * 100).toFixed(2);
+                    const newSharesPercentage = ((Number(newShares) / Number(totalPotShares)) * 100).toFixed(2);
+                    await ctx.replyWithMarkdownV2(
+                        `✅ *Deposit successful\\!*\n\n` +
+                    escapeMarkdownV2(
+                        `Details \n\n` + 
+                        `New Shares: ${totalUserShares} (${userPercentage}%)\n\n` +
+                        `Your Total Shares: ${newShares} (${newSharesPercentage}%) \n\n` +
+                        `Total Shares: ${totalPotShares} \n\n` +
+                        `${message}`
+                    ));
+                } catch (e: any) {
+                    await ctx.replyWithMarkdownV2(
+                    `${e.message}`
+                    );
+                }
             } else {
                 await ctx.replyWithMarkdownV2(
                     `*\n\n${escapeMarkdownV2(message)}`
@@ -226,28 +232,7 @@ depositSolToVaultWizard.action("wizard_cancel_deposit", async (ctx) => {
   return ctx.scene.leave();
 });
 
-async function computePotValueInUSD(
-    assets: Array<{
-        mintAddress: string;
-        balance: bigint
-    }>
-): Promise<number> {
-    let totalUSD = 0;
-
-    for (const { mintAddress, balance } of assets) {
-        if (balance === BigInt(0)) continue;
-
-        let priceUSD = await getPriceInUSD(mintAddress);
-
-        const decimals = await getTokenDecimalsWithCache(mintAddress);
-        const balanceNumber = Number(balance) / (10 ** decimals);
-        totalUSD += balanceNumber * priceUSD;
-    }
-
-    return totalUSD;
-}
-
-export async function mintShares(
+export async function mintSharesAndDeposit(
     potId: string,
     userId: string,
     lamportsDeposited: bigint

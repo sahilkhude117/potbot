@@ -7,10 +7,11 @@ export interface DepositWizardState extends Scenes.WizardSessionData {
   amount: number;
 }
 
-export interface MintSharesInput {
-  potId: string;
-  userId: string;
-  lamportsDeposited: bigint;
+export interface WithdrawalWizardState extends Scenes.WizardSessionData {
+    userId: string;
+    potId: string;
+    potName: string;
+    sharesToBurn: bigint;
 }
 
 export interface SessionData extends Scenes.WizardSession<DepositWizardState> {}

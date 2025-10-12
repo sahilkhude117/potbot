@@ -1,18 +1,25 @@
 import { Markup, Scenes, session, Telegraf } from "telegraf";
 import { prismaClient } from "./db/prisma";
 import { ADD_POTBOT_TO_GROUP, CREATE_INVITE_DONE_KEYBOARD, CREATE_NEW_POT, DEFAULT_KEYBOARD, SOLANA_POT_BOT, SOLANA_POT_BOT_WITH_START_KEYBOARD } from "./keyboards/keyboards";
-import { Keypair}  from "@solana/web3.js";
+import { Keypair, LAMPORTS_PER_SOL}  from "@solana/web3.js";
 import { getBalanceMessage } from "./solana/getBalance";
 import { createMockVault } from "./solana/createVault";
 import { escapeMarkdownV2 } from "./lib/utils";
 import { depositSolToVaultWizard } from "./wizards/depositWizard";
+import { withdrawFromVaultWizard } from "./wizards/withdrawalWizard";
 import type { BotContext } from "./lib/types";
 import { message } from "telegraf/filters";
 import { Role } from "./generated/prisma";
+import { getPriceInUSD } from "./solana/getPriceInUSD";
+import { SOL_MINT } from "./lib/statits";
+import { getUserPosition } from "./solana/getUserPosition";
 
 const bot = new Telegraf<BotContext>(process.env.TELEGRAM_BOT_TOKEN!)
 
-const stage = new Scenes.Stage<BotContext>([depositSolToVaultWizard]);
+const stage = new Scenes.Stage<BotContext>([
+  depositSolToVaultWizard,
+ withdrawFromVaultWizard,
+]);
 bot.use(session());
 bot.use(stage.middleware());
 
@@ -129,22 +136,8 @@ bot.start(async (ctx) => {
 
 bot.command('deposit', (ctx) => ctx.scene.enter("deposit_sol_to_vault_wizard"))
 
-bot.command("portfolio", async ctx => {
-  await ctx.replyWithMarkdownV2(
-  `📈 *Your Overall Portfolio Summary*\n\n` +
-  `Here's a snapshot of your performance across all pots you've joined\\.\n\n` +
-  `*Total Deposited:* \`15\\.00 SOL\`\n` +
-  `*Total Current Value:* \`18\\.50 SOL\`\n` +
-  `*Overall PnL:* \\+3\\.50 SOL \\(\\+23\\.3%\\) 🟢\n\n` +
-  `\\- \\- \\- \\- \\- \\- \\- \\- \\- \\- \\- \\- \\- \\- \\-\n\n` +
-  `*💼 Your Pot\\-by\\-Pot Breakdown*\n\n` +
-  `*Degen Dojo*\n` +
-  `> *Your Share:* \`12\\.5 % of the pot\`\n` +
-  `> *Deposited:* \`15\\.00 SOL\`\n` +
-  `> *Current Value:* \`18\\.50 SOL\`\n` +
-  `> *Pot PnL:* \\+3\\.50 SOL \\(\\+23\\.3%\\) 🟢`
-);
-})
+bot.command('withdraw', (ctx) => ctx.scene.enter("withdraw_from_vault_wizard"))
+
 
 bot.action("public_key", async ctx => {
     const existingUser = await prismaClient.user.findFirst({

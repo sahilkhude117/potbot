@@ -30,3 +30,7 @@ export const CREATE_INVITE_DONE_KEYBOARD = Markup.inlineKeyboard([[
     Markup.button.callback("Done", "create_invite")
 ]])
 
+export const CHECK_BALANCE_KEYBOARD = Markup.inlineKeyboard([
+    Markup.button.callback("Check Balance", "balance"),  
+])
+
