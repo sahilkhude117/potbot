@@ -36,6 +36,19 @@ model Pot {
   members          Pot_Member[]
   trades           Trade[]
   assets           Asset[]
+
+  deposits         Deposit[]
+  withdrawals      Withdrawal[]
+  redemptionTrades RedemptionTrade[]
+
+  totalShares      BigInt     @default(0)
+  accruedAdminFees BigInt     @default(0)
+
+  cashOutMint      String     @default("So11111111111111111111111111111111111111112")
+  redemptionFeeBps Int        @default(0)
+  performanceFeeBps Int       @default(0)
+  maxRedeptionSlippageBps Int @default(50)
+
   createdAt        DateTime   @default(now())
 }
 
@@ -51,7 +64,38 @@ model Pot_Member {
 
   tradesExecuted   Trade[]
 
+  shares           BigInt     @default(0)
+  depositRecords   Deposit[]
+  withdrawalRecords Withdrawal[]
+
   @@unique([userId, potId]) // user can only join once per pot
+}
+
+model Deposit {
+  id               String     @id @default(uuid())
+  potId            String
+  pot              Pot        @relation(fields: [potId], references: [id])
+  userId           String
+  member           Pot_Member @relation(fields: [userId, potId], references: [userId, potId])
+
+  amount           BigInt
+  sharesMinted     BigInt
+  timestamp        DateTime   @default(now())
+}
+
+model Withdrawal {
+  id               String     @id @default(uuid())
+  potId            String
+  pot              Pot        @relation(fields: [potId], references: [id])
+  userId           String
+  member           Pot_Member @relation(fields: [userId, potId], references: [userId, potId])
+
+  sharesBurned     BigInt
+  amountOut        BigInt
+
+  redemptionTrades RedemptionTrade[]
+
+  timestamp        DateTime   @default(now())
 }
 
 enum Role {
@@ -79,6 +123,22 @@ model Trade {
   createdAt        DateTime    @default(now())
 }
 
+model RedemptionTrade {
+  id               String      @id @default(uuid())
+  potId            String
+  pot              Pot         @relation(fields: [potId], references: [id])
+  withdrawalId     String
+  withdrawal       Withdrawal  @relation(fields: [withdrawalId], references: [id])
+
+  sellMint         String
+  sellAmount       BigInt
+  buyMint          String
+  buyAmount        BigInt
+  price            Decimal
+  slippageBps      Int         @default(50)
+  timestamp        DateTime    @default(now())
+}
+
 model Asset {
   id               String      @id @default(uuid())
   potId            String
@@ -86,6 +146,7 @@ model Asset {
 
   mintAddress      String
   balance          BigInt
+  pendingSale      BigInt      @default(0)
 
   updatedAt        DateTime    @updatedAt
 
