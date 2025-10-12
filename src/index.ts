@@ -424,7 +424,37 @@ bot.on(message('new_chat_members'), async (ctx) => {
       }
     })
     if (existingUser) {
-      await ctx.reply(`👋 GM GM! ${member.first_name}! Glad to have you here.`);
+      const pot = await prismaClient.pot.findUnique({ 
+        where: { 
+          telegramGroupId: ctx.chat.id.toString()
+        } 
+      });
+
+      if (!pot) {
+        return ctx.reply("This pot no longer exists.");
+      }
+
+      const pot_member = await prismaClient.pot_Member.findUnique({
+        where: {
+          userId_potId: {
+            userId: existingUser.id,
+            potId: pot.id,
+          }
+        }
+      })
+
+      if (pot_member) {
+        await ctx.reply(`👋 GM GM! ${member.first_name}! Glad to have you here.`);
+      } else {
+        await prismaClient.pot_Member.create({
+          data: {
+            potId: pot.id,
+            userId: existingUser.id,
+            role: Role.MEMBER
+          }
+        })
+        await ctx.reply(`👋 GM GM! ${member.first_name}! Glad to have you here.`);
+      }
     } else {
       const keypair = Keypair.generate();
       const newUser = await prismaClient.user.create({

@@ -1,18 +1,21 @@
 import { Markup, Scenes } from "telegraf";
 import { prismaClient } from "../db/prisma";
 import { decodeSecretKey, escapeMarkdownV2, escapeMarkdownV2Amount } from "../lib/utils";
-import { Keypair, PublicKey } from "@solana/web3.js";
+import { Keypair, LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
 import { sendSol } from "../solana/depositToVault";
 import { getBalanceMessage } from "../solana/getBalance";
-import type { BotContext, DepositWizardState } from "../lib/types";
+import type { BotContext, DepositWizardState, MintSharesInput } from "../lib/types";
+import { getPriceInUSD } from "../solana/getPriceInUSD";
+import { SOL_DECIMALS, SOL_MINT } from "../lib/statits";
+import { getTokenDecimals } from "../solana/getTokenDecimals";
 
+const decimalsCache = new Map<string, number>();
 
 export const depositSolToVaultWizard = new Scenes.WizardScene<BotContext>(
     'deposit_sol_to_vault_wizard',
     
     // 1. show pots
     async (ctx) => {
-        const state = ctx.wizard.state as DepositWizardState;
         try {
             const state = ctx.wizard.state as DepositWizardState;
             const existingUser = await prismaClient.user.findFirst({
@@ -183,9 +186,25 @@ depositSolToVaultWizard.action("wizard_confirm_deposit", async (ctx) => {
             const { message, success } = await sendSol(fromKeypair, toPublicKey, amount);
 
             if (success) {
-                await ctx.replyWithMarkdownV2(
-                    `✅ *Deposit successful\\!*\n\n${escapeMarkdownV2(message)}`
+                const mintedShares = await mintShares(
+                    potId,
+                    userId,
+                    BigInt(amount * LAMPORTS_PER_SOL),
                 );
+                const newShares = mintedShares.userNewShares;
+                const totalUserShares = mintedShares.sharesMinted;
+                const totalPotShares = mintedShares.newTotalShares;
+
+                const userPercentage = ((Number(totalUserShares) / Number(totalPotShares)) * 100).toFixed(2);
+                const newSharesPercentage = ((Number(newShares) / Number(totalPotShares)) * 100).toFixed(2);
+                await ctx.replyWithMarkdownV2(escapeMarkdownV2(
+                    `✅ *Deposit successful\\!*\n\n` +
+                    `Details \n\n` + 
+                    `New Shares: ${newShares} (${newSharesPercentage})\n\n` +
+                    `Your Total Shares: ${totalUserShares} (${userPercentage})\n\n` +
+                    `Total Shares: ${totalPotShares} \n\n` +
+                    `${message}`
+                ));
             } else {
                 await ctx.replyWithMarkdownV2(
                     `*\n\n${escapeMarkdownV2(message)}`
@@ -195,6 +214,7 @@ depositSolToVaultWizard.action("wizard_confirm_deposit", async (ctx) => {
     } catch (error) {
         console.error(error);
         await ctx.reply("⚠️ Something went wrong while sending SOL.");
+        ctx.scene.leave();
     }
 
     await ctx.answerCbQuery("Done ✅");
@@ -206,3 +226,201 @@ depositSolToVaultWizard.action("wizard_cancel_deposit", async (ctx) => {
   await ctx.answerCbQuery("Cancelled");
   return ctx.scene.leave();
 });
+
+
+async function getTokenDecimalsWithCache(mintAddress: string): Promise<number> {
+    if (mintAddress === SOL_MINT) return SOL_DECIMALS;
+
+    if (decimalsCache.has(mintAddress)) {
+        return decimalsCache.get(mintAddress) as number;
+    }
+
+    const decimals = await getTokenDecimals(mintAddress);
+    decimalsCache.set(mintAddress, decimals);
+    return decimals;
+}
+
+async function computePotValueInUSD(
+    assets: Array<{
+        mintAddress: string;
+        balance: bigint
+    }>
+): Promise<number> {
+    let totalUSD = 0;
+
+    for (const { mintAddress, balance } of assets) {
+        if (balance === BigInt(0)) continue;
+
+        let priceUSD = await getPriceInUSD(mintAddress);
+
+        const decimals = await getTokenDecimalsWithCache(mintAddress);
+        const balanceNumber = Number(balance) / (10 ** decimals);
+        totalUSD += balanceNumber * priceUSD;
+    }
+
+    return totalUSD;
+}
+
+export async function mintShares(
+    potId: string,
+    userId: string,
+    lamportsDeposited: bigint
+): Promise<{
+    sharesMinted: bigint;
+    newTotalShares: bigint;
+    userNewShares: bigint;
+    sharePrice: number;
+}> {
+    return await prismaClient.$transaction(async (tx) => {
+        const pot = await tx.pot.findUnique({
+            where: { id: potId },
+            include: {
+                assets: true,
+                members: {
+                    where: { userId }
+                }
+            }
+        });
+
+        if (!pot) throw new Error ("Pot not found");
+
+        let member = pot.members[0];
+        if (!member) {
+            member = await tx.pot_Member.create({
+                data: {
+                    potId,
+                    userId,
+                }
+            })
+        }
+
+        const existingSolAsset = pot.assets.find(a => a.mintAddress === SOL_MINT);
+        
+        if (existingSolAsset) {
+            const newBalance = existingSolAsset.balance + lamportsDeposited;
+            await tx.asset.update({
+                where: { id: existingSolAsset.id },
+                data: { balance: newBalance }
+            });
+        } else {
+            await tx.asset.create({
+                data: {
+                    potId,
+                    mintAddress: SOL_MINT,
+                    balance: lamportsDeposited,
+                },
+            });
+        }
+
+        const solUSD = await getPriceInUSD(SOL_MINT);
+
+        const potValueBeforeDeposit = await computePotValueInUSD(
+            pot.assets.map(a => ({ mintAddress: a.mintAddress, balance: a.balance })),
+        )
+
+        const depositUSD = Number(lamportsDeposited) / LAMPORTS_PER_SOL * solUSD;
+        const totalSharesBefore = pot.totalShares;
+
+        let sharesToMint: bigint;
+        let sharePrice: number;
+
+        if (totalSharesBefore === BigInt(0) || potValueBeforeDeposit === 0) {
+            // 1 share = $1
+            sharesToMint = BigInt(Math.floor(depositUSD * 1e6));
+            sharePrice = depositUSD / Number(sharesToMint);
+        } else {
+            const potValueBeforeDeposit = await computePotValueInUSD(
+                pot.assets.map(a => ({ mintAddress: a.mintAddress, balance: a.balance }))
+            );
+            
+            if (potValueBeforeDeposit <= 0) {
+                throw new Error("Pot has zero or negative value, cannot accept deposits");
+            }
+
+            sharePrice = potValueBeforeDeposit / Number(totalSharesBefore);
+
+            sharesToMint = BigInt(Math.floor(depositUSD / sharePrice));
+        }
+
+        if (sharesToMint === BigInt(0)) {
+            throw new Error(
+                `Deposit too small: $${depositUSD.toFixed(2)} would mint 0 shares. ` +
+                `Minimum deposit: $${((1 / 1e6) * (Number(totalSharesBefore) / potValueBeforeDeposit)).toFixed(6)}`
+            );
+        }
+
+        const newTotalShares = totalSharesBefore + sharesToMint;
+        await tx.pot.update({
+            where: { id: potId },
+            data: { totalShares: newTotalShares },
+        });
+
+        const newUserShares = member.shares + sharesToMint;
+        await tx.pot_Member.update({
+            where: { id: member.id },
+            data: { shares: newUserShares },
+        });
+
+        await tx.deposit.create({
+            data: {
+                potId,
+                userId,
+                amount: lamportsDeposited,
+                sharesMinted: sharesToMint,
+            }
+        });
+
+        return {
+            sharesMinted: sharesToMint,
+            newTotalShares: newTotalShares,
+            userNewShares: newUserShares,
+            sharePrice: sharePrice
+        };
+    }, {
+        isolationLevel: "Serializable",
+        timeout: 30000
+    });
+}
+
+export async function getUserShareValue(
+    potId: string,
+    userId: string
+): Promise<{
+    sharePercentage: number;
+    valueUSD: number;
+    shares: bigint;
+}> {
+    const pot = await prismaClient.pot.findUnique({
+        where: { id: potId },
+        include: {
+            assets: true,
+            members: {
+                where: { userId }
+            }
+        }
+    });
+
+    if (!pot) throw new Error("Pot not found");
+    
+    const member = pot.members[0];
+    if (!member) {
+        return { sharePercentage: 0, valueUSD: 0, shares: BigInt(0) };
+    }
+
+    const priceCache = new Map<string, number>();
+    const totalPotValueUSD = await computePotValueInUSD(
+        pot.assets.map(a => ({ mintAddress: a.mintAddress, balance: a.balance })),
+    );
+
+    const sharePercentage = pot.totalShares === BigInt(0) 
+        ? 0 
+        : Number(member.shares) / Number(pot.totalShares);
+
+    const valueUSD = totalPotValueUSD * sharePercentage;
+
+    return {
+        sharePercentage: sharePercentage * 100,
+        valueUSD,
+        shares: member.shares,
+    };
+}
