@@ -1,12 +1,14 @@
 import { Markup, Scenes, session, Telegraf } from "telegraf";
 import { prismaClient } from "./db/prisma";
-import { ADD_POTBOT_TO_GROUP, CREATE_INVITE_DONE_KEYBOARD, CREATE_NEW_POT, DEFAULT_KEYBOARD, SOLANA_POT_BOT } from "./keyboards/keyboards";
+import { ADD_POTBOT_TO_GROUP, CREATE_INVITE_DONE_KEYBOARD, CREATE_NEW_POT, DEFAULT_KEYBOARD, SOLANA_POT_BOT, SOLANA_POT_BOT_WITH_START_KEYBOARD } from "./keyboards/keyboards";
 import { Keypair}  from "@solana/web3.js";
 import { getBalanceMessage } from "./solana/getBalance";
 import { createMockVault } from "./solana/createVault";
 import { escapeMarkdownV2 } from "./lib/utils";
 import { depositSolToVaultWizard } from "./wizards/depositWizard";
 import type { BotContext } from "./lib/types";
+import { message } from "telegraf/filters";
+import { Role } from "./generated/prisma";
 
 const bot = new Telegraf<BotContext>(process.env.TELEGRAM_BOT_TOKEN!)
 
@@ -352,9 +354,16 @@ bot.action("show_pots", async ctx => {
       where: { 
         isGroupAdded: true, 
         inviteLink: { not: null },
-        members: {
-          some: { userId: existingUser?.id }
-        }
+        OR: [
+            {
+                members: {
+                    some: { userId: existingUser?.id },
+                },
+            },
+            {
+                adminId: existingUser?.id,
+            },
+        ],
       }, 
       select: { id: true, name: true },
     });
@@ -406,6 +415,50 @@ bot.action(/show_pot_(.+)/, async (ctx) => {
   );
 });
 
+bot.on(message('new_chat_members'), async (ctx) => {
+  const newMembers = ctx.message.new_chat_members;
+  for (const member of newMembers) {
+    const existingUser = await prismaClient.user.findFirst({
+      where: {
+        telegramUserId: member.id.toString(),
+      }
+    })
+    if (existingUser) {
+      await ctx.reply(`👋 GM GM! ${member.first_name}! Glad to have you here.`);
+    } else {
+      const keypair = Keypair.generate();
+      const newUser = await prismaClient.user.create({
+          data: {
+              telegramUserId: ctx.from.id.toString(),
+              publicKey: keypair.publicKey.toBase58(),
+              privateKey: keypair.secretKey.toBase64()
+          }
+      })
+
+      const pot = await prismaClient.pot.findUnique({ 
+        where: { 
+          telegramGroupId: ctx.chat.id.toString()
+        } 
+      });
+
+      if (!pot) {
+        return ctx.reply("This pot no longer exists.");
+      }
+      
+      const pot_member = await prismaClient.pot_Member.create({
+        data: {
+          potId: pot.id,
+          userId: newUser.id,
+          role: Role.MEMBER
+        }
+      })
+
+      await ctx.reply(`👋 GM GM! ${member.first_name}! Glad to have you here.`,{
+        ...SOLANA_POT_BOT_WITH_START_KEYBOARD
+      });
+    }  
+  }
+});
 
 bot.launch()
 
