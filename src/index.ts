@@ -1,24 +1,26 @@
 import { Markup, Scenes, session, Telegraf } from "telegraf";
 import { prismaClient } from "./db/prisma";
 import { ADD_POTBOT_TO_GROUP, CREATE_INVITE_DONE_KEYBOARD, CREATE_NEW_POT, DEFAULT_KEYBOARD, SOLANA_POT_BOT, SOLANA_POT_BOT_WITH_START_KEYBOARD } from "./keyboards/keyboards";
-import { Keypair, LAMPORTS_PER_SOL}  from "@solana/web3.js";
+import { Connection, Keypair, LAMPORTS_PER_SOL, VersionedTransaction}  from "@solana/web3.js";
 import { getBalanceMessage } from "./solana/getBalance";
 import { createMockVault } from "./solana/createVault";
-import { escapeMarkdownV2, escapeMarkdownV2Amount } from "./lib/utils";
+import { decodeSecretKey, escapeMarkdownV2, escapeMarkdownV2Amount } from "./lib/utils";
 import { depositSolToVaultWizard } from "./wizards/depositWizard";
 import { withdrawFromVaultWizard } from "./wizards/withdrawalWizard";
 import type { BotContext } from "./lib/types";
 import { message } from "telegraf/filters";
-import { Role } from "./generated/prisma";
 import { getPriceInUSD } from "./solana/getPriceInUSD";
 import { SOL_MINT } from "./lib/statits";
 import { getUserPosition } from "./solana/getUserPosition";
+import { swap } from "./solana/swapAssetsWithJup";
 
 const bot = new Telegraf<BotContext>(process.env.TELEGRAM_BOT_TOKEN!)
 
+const connection = new Connection(process.env.MAINNET_RPC_URL!, 'confirmed');
+
 const stage = new Scenes.Stage<BotContext>([
   depositSolToVaultWizard,
- withdrawFromVaultWizard,
+  withdrawFromVaultWizard,
 ]);
 bot.use(session());
 bot.use(stage.middleware());
@@ -131,7 +133,6 @@ bot.start(async (ctx) => {
         })
       }
     }
-    
 })
 
 bot.command('deposit', (ctx) => ctx.scene.enter("deposit_sol_to_vault_wizard"))
@@ -337,6 +338,28 @@ bot.command("portfolio", async ctx => {
     console.error("Portfolio error:", e);
     await ctx.reply("Opps! Cant load your portfolio now");
 
+  }
+})
+
+bot.command("swap", async (ctx) => {
+  const existingUser = await prismaClient.user.findFirst({
+    where: {
+      telegramUserId: ctx.from.id.toString()
+    }
+  })
+  const tokenMint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+  const quantity = 0.00006;
+  const userKeypair = Keypair.fromSecretKey(decodeSecretKey(existingUser?.privateKey as string));
+
+  try {
+    const swapTxn = await swap(SOL_MINT, tokenMint, Number(quantity) * LAMPORTS_PER_SOL, existingUser?.publicKey!);
+    const tx = VersionedTransaction.deserialize(Uint8Array.from(atob(swapTxn), c => c.charCodeAt(0)));
+    tx.sign([userKeypair]);
+    const sign = await connection.sendTransaction(tx);
+    ctx.reply(`Swap successful, you can track it here https://explorer.solana.com/tx/${sign}`);
+  } catch (error) {
+    console.log(error);
+    ctx.reply(`Error while doing a swap`);
   }
 })
 

@@ -2,7 +2,7 @@ import { Markup, Scenes } from "telegraf";
 import { prismaClient } from "../db/prisma";
 import { decodeSecretKey, escapeMarkdownV2, escapeMarkdownV2Amount } from "../lib/utils";
 import { Keypair, LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
-import { sendSol } from "../solana/depositToVault";
+import { sendSol } from "../solana/sendSol";
 import { getBalanceMessage } from "../solana/getBalance";
 import type { BotContext, DepositWizardState } from "../lib/types";
 import { getPriceInUSD } from "../solana/getPriceInUSD";
