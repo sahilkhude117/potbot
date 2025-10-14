@@ -13,3 +13,4 @@ export function decodeSecretKey(base64String: string): Uint8Array {
   const uint8Array = Uint8Array.fromBase64(base64String);
   return uint8Array;
 }
+

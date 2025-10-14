@@ -220,10 +220,10 @@ buyTokenWithSolWizard.action("wizard_confirm_buy", async (ctx) => {
             const outputAmountFormatted = outputAmount / Math.pow(10, outputDecimals);
             await ctx.replyWithMarkdownV2(
                 `✅ *Swap Successful\\!*\n\n` +
-                `💰 *Spent:* ${escapeMarkdownV2Amount(inputAmount)} SOL\n` +
-                `🪙 *Received:* ≈ ${escapeMarkdownV2Amount(outputAmountFormatted)} tokens\n` +
-                `💵 *Value:* \\$${escapeMarkdownV2(parseFloat(usdValue).toFixed(4))}\n\n` +
-                `📝 *Token:* \`${escapeMarkdownV2(state.tokenMint.substring(0, 8))}\\.\\.\\.\`\n\n` +
+                `*Spent:* ${escapeMarkdownV2Amount(inputAmount)} SOL\n` +
+                `*Received:* ≈ ${escapeMarkdownV2Amount(outputAmountFormatted)} tokens\n` +
+                `*Value:* \\$${escapeMarkdownV2(parseFloat(usdValue).toFixed(4))}\n\n` +
+                `*Token:* \`${escapeMarkdownV2(state.tokenMint.substring(0, 8))}\\.\\.\\.\`\n\n` +
                 `🔗 [View on Explorer](https://explorer.solana.com/tx/${escapeMarkdownV2(signature)})\n\n` +
                 `_Transaction confirmed\\!_`,
             );

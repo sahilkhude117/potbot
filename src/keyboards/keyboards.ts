@@ -36,3 +36,6 @@ export const CHECK_BALANCE_KEYBOARD = Markup.inlineKeyboard([
     Markup.button.callback("Check Balance", "balance"),  
 ])
 
+export const DEFAULT_GROUP_KEYBOARD = Markup.inlineKeyboard([
+    
+])
