@@ -150,52 +150,66 @@ bot.action("buy_asset_with_solana_group", (ctx) => {
     return ctx.scene.enter("buy_token_with_sol_wizard_group");
 });
 
-bot.command("portfolio", async ctx => {
+async function handlePortfolio(ctx: any) {
   try {
-    const existingUser = await prismaClient.user.findFirst({
-      where: {
+    const isGroup = (ctx.chat?.type === "group" || ctx.chat?.type === "supergroup");
+
+    if (isGroup) {
+      await showGroupPortfolio(ctx);
+    } else {
+      await showPersonalPortfolio(ctx);
+    }
+  } catch (error: any) {
+    console.error("Portfolio error:", error);
+    await ctx.reply("❌ Failed to load portfolio. Please try again.");
+  }
+}
+
+async function showPersonalPortfolio(ctx: any) {
+  const existingUser = await prismaClient.user.findFirst({
+    where: {
+      telegramUserId: ctx.from.id.toString(),
+    }
+  });
+
+  if (!existingUser) {
+    const keypair = Keypair.generate();
+    await prismaClient.user.create({
+      data: {
         telegramUserId: ctx.from.id.toString(),
+        publicKey: keypair.publicKey.toBase58(),
+        privateKey: keypair.secretKey.toBase64()
       }
     });
+    const publicKey = keypair.publicKey.toString();
+    await ctx.reply(`Welcome to the Pot Bot. Here is your public key ${publicKey} 
+    You can trade on solana now. Put some SOL to trade.`, {
+      ...DEFAULT_KEYBOARD
+    });
+    return;
+  }
 
-    if (!existingUser) {
-      const keypair = Keypair.generate();
-        await prismaClient.user.create({
-            data: {
-                telegramUserId: ctx.from.id.toString(),
-                publicKey: keypair.publicKey.toBase58(),
-                privateKey: keypair.secretKey.toBase64()
-            }
-        })
-        const publicKey = keypair.publicKey.toString();
-        ctx.reply(`Welcome to the Pot Bot. Here is your public key ${publicKey} 
-        You can trade on solana now. Put some SOL to trade.`, {
-            ...DEFAULT_KEYBOARD
-        })
-    }
-
-    const userMemberships = await prismaClient.pot_Member.findMany({
-      where: {
-        userId: existingUser?.id
-      },
-      include: {
-        pot: {
-          include: {
-            assets: true
-          }
+  const userMemberships = await prismaClient.pot_Member.findMany({
+    where: {
+      userId: existingUser?.id
+    },
+    include: {
+      pot: {
+        include: {
+          assets: true
         }
       }
-    });
-
-    if (userMemberships.length === 0) {
-      await ctx.replyWithMarkdownV2(
-          `📊 *Your Portfolio*\n\n` +
-          `You haven't joined any pots yet\\.\n\n` + {
-            ...DEFAULT_KEYBOARD
-          }
-      );
-      return;
     }
+  });
+
+  if (userMemberships.length === 0) {
+    await ctx.replyWithMarkdownV2(
+      `📊 *Your Portfolio*\n\n` +
+      `You haven't joined any pots yet\\.\n\n` +
+      `Use /deposit to get started\\!`
+    );
+    return;
+  }
 
     let totalDepositedUSD = 0;
     let totalCurrentValueUSD = 0;
@@ -279,7 +293,7 @@ bot.command("portfolio", async ctx => {
     const withdrawnSOL = totalWithdrawnUSD / solPrice;
 
     const pnlEmoji = totalPnL >= 0 ? "🟢" : "🔴";
-    const pnlSign = totalPnL >= 0 ? "\\+" : "";
+    const pnlSign = totalPnL >= 0 ? "\\+" : "\\-";
 
     potDetails.sort((a, b) => b.pnlPercentage - a.pnlPercentage);
 
@@ -301,7 +315,7 @@ bot.command("portfolio", async ctx => {
         const pot = potDetails[i];
         if (!pot) continue;
         const potPnlEmoji = pot.pnl >= 0 ? "🟢" : "🔴";
-        const potPnlSign = pot.pnl >= 0 ? "\\+" : "";
+        const potPnlSign = pot.pnl >= 0 ? "\\+" : "\\-";
         const statusEmoji = pot.isActive ? "📈" : "📤"; 
         
         message += `${statusEmoji} *${escapeMarkdownV2(pot.name)}*\n`;
@@ -342,157 +356,141 @@ bot.command("portfolio", async ctx => {
     
     message += `\n_Last updated: ${escapeMarkdownV2(new Date().toLocaleString())}_`;
 
-    await ctx.replyWithMarkdownV2(message);
+  await ctx.replyWithMarkdownV2(message);
+}
 
-  } catch (e: any) {
-    console.error("Portfolio error:", e);
-    await ctx.reply("Opps! Cant load your portfolio now");
+async function showGroupPortfolio(ctx: any) {
+  const pot = await prismaClient.pot.findUnique({
+    where: {
+      telegramGroupId: ctx.chat.id.toString()
+    },
+    include: {
+      assets: true,
+      members: true
+    }
+  });
 
+  if (!pot) {
+    await ctx.reply("❌ No pot found for this group.");
+    return;
   }
-})
+
+  const solPrice = await getPriceInUSD(SOL_MINT);
+
+  const potValueUSD = await computePotValueInUSD(
+    pot.assets.map(a => ({ mintAddress: a.mintAddress, balance: a.balance }))
+  );
+  const potValueSOL = potValueUSD / solPrice;
+
+  const deposits = await prismaClient.deposit.findMany({
+    where: { potId: pot.id }
+  });
+
+  const withdrawals = await prismaClient.withdrawal.findMany({
+    where: { potId: pot.id }
+  });
+
+  const totalDepositsLamports = deposits.reduce((sum, d) => sum + d.amount, BigInt(0));
+  const totalWithdrawalsLamports = withdrawals.reduce((sum, w) => sum + w.amountOut, BigInt(0));
+  
+  const totalDepositsSOL = Number(totalDepositsLamports) / LAMPORTS_PER_SOL;
+  const totalWithdrawalsSOL = Number(totalWithdrawalsLamports) / LAMPORTS_PER_SOL;
+
+  const totalDepositsUSD = totalDepositsSOL * solPrice;
+  const totalWithdrawalsUSD = totalWithdrawalsSOL * solPrice;
+
+  const allTimePnLUSD = (potValueUSD + totalWithdrawalsUSD) - totalDepositsUSD;
+  const allTimePnLSOL = allTimePnLUSD / solPrice;
+
+  const allTimePnLPercentage = totalDepositsUSD > 0 ? (allTimePnLUSD / totalDepositsUSD) * 100 : 0;
+
+  const pnlEmoji = allTimePnLSOL >= 0 ? "🟢" : "🔴";
+  const pnlSign = allTimePnLSOL >= 0 ? "\\+" : "\\-";
+
+  let assetAllocation = "";
+  const sortedAssets = [...pot.assets].sort((a, b) => {
+    const aValue = Number(b.balance);
+    const bValue = Number(a.balance);
+    return bValue - aValue;
+  });
+
+  for (const asset of sortedAssets) {
+    if (asset.balance === BigInt(0)) continue;
+
+    const decimals = await getTokenDecimalsWithCache(asset.mintAddress);
+    const balanceReadable = Number(asset.balance) / (10 ** decimals);
+    const priceUSD = await getPriceInUSD(asset.mintAddress);
+    const valueUSD = balanceReadable * priceUSD;
+    const valueSOL = valueUSD / solPrice;
+    const percentage = potValueUSD > 0 ? (valueUSD / potValueUSD) * 100 : 0;
+
+    let symbol = "TOKEN";
+    let emoji = "🪙";
+    if (asset.mintAddress === SOL_MINT) {
+      symbol = "SOL";
+      emoji = "🪙";
+    } else if (asset.mintAddress === "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v") {
+      symbol = "USDC";
+      emoji = "💵";
+    } else {
+      symbol = asset.mintAddress.substring(0, 4).toUpperCase();
+      emoji = "🎯";
+    }
+
+    assetAllocation += `\n${emoji} *${escapeMarkdownV2(symbol)}:*\n`;
+    assetAllocation += `> Balance: \`${escapeMarkdownV2Amount(balanceReadable)}\`\n`;
+    assetAllocation += `> Value: \\$${escapeMarkdownV2Amount(valueUSD)} \\(${escapeMarkdownV2Amount(percentage)}%\\)\n`;
+  }
+
+  const navPerShareUSD = pot.totalShares > BigInt(0) 
+    ? potValueUSD / Number(pot.totalShares) 
+    : 0;
+
+  const inceptionDate = pot.createdAt.toLocaleDateString('en-US', { 
+    month: 'short', 
+    day: 'numeric', 
+    year: 'numeric' 
+  });
+
+  const solAsset = pot.assets.find(a => a.mintAddress === SOL_MINT);
+  const actualSOLBalance = solAsset ? Number(solAsset.balance) / LAMPORTS_PER_SOL : 0;
+  const trackedNetSOL = totalDepositsSOL - totalWithdrawalsSOL;
+  const hasUntrackedDeposits = actualSOLBalance > (trackedNetSOL * 1.01); // 1% tolerance
+
+  let message = `*📈 Group Portfolio: ${escapeMarkdownV2(pot.name || "Unnamed Pot")}*\n\n`;
+  message += `\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\n\n`;
+  
+  message += `*Key Metrics*\n\n`;
+  message += `*Total Value Locked \\(TVL\\):* \\$${escapeMarkdownV2Amount(potValueUSD)}\n`;
+  message += `*All\\-Time PnL:* ${pnlSign}\\$${escapeMarkdownV2Amount(Math.abs(allTimePnLUSD))} \\(${pnlSign}${escapeMarkdownV2Amount(Math.abs(allTimePnLPercentage))}%\\) ${pnlEmoji}\n`;
+  message += `*Tracked Deposits:* \\$${escapeMarkdownV2Amount(totalDepositsUSD)}\n`;
+  message += `*Tracked Withdrawals:* \\$${escapeMarkdownV2Amount(totalWithdrawalsUSD)}\n`;
+  
+  if (hasUntrackedDeposits) {
+    message += `\n_ℹ️ Note: Current balance suggests additional deposits made outside bot \\(e\\.g\\. via Phantom\\)\\. PnL may be higher than actual\\._\n`;
+  }
+  message += `\n`;
+  
+  message += `\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\n\n`;
+  message += `*Asset Allocation*`;
+  message += assetAllocation;
+  
+  message += `\n\n\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\n\n`;
+  message += `*Pot Statistics*\n\n`;
+  message += `*Members:* \`${pot.members.length}\`\n`;
+  message += `*Total Shares Issued:* \`${escapeMarkdownV2Amount(Number(pot.totalShares))}\`\n`;
+  message += `*Net Asset Value \\(NAV\\) per Share:* \\$${escapeMarkdownV2Amount(navPerShareUSD)}\n`;
+  message += `*Inception Date:* \`${escapeMarkdownV2(inceptionDate)}\`\n`;
+
+  await ctx.replyWithMarkdownV2(message);
+}
+
+bot.command("portfolio", handlePortfolio);
 
 bot.action("portfolio", async (ctx) => {
-  try {
-    const isGroup = (ctx.chat?.type === "group" || ctx.chat?.type === "supergroup");
-
-    if (!isGroup) {
-      return ctx.answerCbQuery("Use /portfolio command in private chat for your personal portfolio.");
-    }
-
-    const pot = await prismaClient.pot.findUnique({
-      where: {
-        telegramGroupId: ctx.chat.id.toString()
-      },
-      include: {
-        assets: true,
-        members: true
-      }
-    });
-
-    if (!pot) {
-      return ctx.reply("❌ No pot found for this group.");
-    }
-
-    const solPrice = await getPriceInUSD(SOL_MINT);
-
-    // Calculate current pot value
-    const potValueUSD = await computePotValueInUSD(
-      pot.assets.map(a => ({ mintAddress: a.mintAddress, balance: a.balance }))
-    );
-    const potValueSOL = potValueUSD / solPrice;
-
-    // Get deposit and withdrawal records (tracked through the bot)
-    const deposits = await prismaClient.deposit.findMany({
-      where: { potId: pot.id }
-    });
-
-    const withdrawals = await prismaClient.withdrawal.findMany({
-      where: { potId: pot.id }
-    });
-
-    // Calculate totals from records
-    const totalDepositsLamports = deposits.reduce((sum, d) => sum + d.amount, BigInt(0));
-    const totalWithdrawalsLamports = withdrawals.reduce((sum, w) => sum + w.amountOut, BigInt(0));
-    
-    const totalDepositsSOL = Number(totalDepositsLamports) / LAMPORTS_PER_SOL;
-    const totalWithdrawalsSOL = Number(totalWithdrawalsLamports) / LAMPORTS_PER_SOL;
-
-    const totalDepositsUSD = totalDepositsSOL * solPrice;
-    const totalWithdrawalsUSD = totalWithdrawalsSOL * solPrice;
-
-    const allTimePnLUSD = (potValueUSD + totalWithdrawalsUSD) - totalDepositsUSD;
-    const allTimePnLSOL = allTimePnLUSD / solPrice;
-  
-    const allTimePnLPercentage = totalDepositsUSD > 0 ? (allTimePnLUSD / totalDepositsUSD) * 100 : 0;
-
-    const pnlEmoji = allTimePnLSOL >= 0 ? "🟢" : "🔴";
-    const pnlSign = allTimePnLSOL >= 0 ? "+" : "";
-
-    let assetAllocation = "";
-    const sortedAssets = [...pot.assets].sort((a, b) => {
-      const aValue = Number(b.balance);
-      const bValue = Number(a.balance);
-      return bValue - aValue;
-    });
-
-    for (const asset of sortedAssets) {
-      if (asset.balance === BigInt(0)) continue;
-
-      const decimals = await getTokenDecimalsWithCache(asset.mintAddress);
-      const balanceReadable = Number(asset.balance) / (10 ** decimals);
-      const priceUSD = await getPriceInUSD(asset.mintAddress);
-      const valueUSD = balanceReadable * priceUSD;
-      const valueSOL = valueUSD / solPrice;
-      const percentage = potValueUSD > 0 ? (valueUSD / potValueUSD) * 100 : 0;
-
-      let symbol = "TOKEN";
-      let emoji = "🪙";
-      if (asset.mintAddress === SOL_MINT) {
-        symbol = "SOL";
-        emoji = "🪙";
-      } else if (asset.mintAddress === "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v") {
-        symbol = "USDC";
-        emoji = "💵";
-      } else {
-        symbol = asset.mintAddress.substring(0, 4).toUpperCase();
-        emoji = "🎯";
-      }
-
-      assetAllocation += `\n${emoji} *${escapeMarkdownV2(symbol)}:*\n`;
-      assetAllocation += `> Balance: \`${escapeMarkdownV2Amount(balanceReadable)}\`\n`;
-      assetAllocation += `> Value: \\$${escapeMarkdownV2Amount(valueUSD)} \\(${escapeMarkdownV2Amount(percentage)}%\\)\n`;
-    }
-
-    const navPerShareUSD = pot.totalShares > BigInt(0) 
-      ? potValueUSD / Number(pot.totalShares) 
-      : 0;
-
-    const inceptionDate = pot.createdAt.toLocaleDateString('en-US', { 
-      month: 'short', 
-      day: 'numeric', 
-      year: 'numeric' 
-    });
-
-    // Check if there might be untracked deposits (direct transfers)
-    const solAsset = pot.assets.find(a => a.mintAddress === SOL_MINT);
-    const actualSOLBalance = solAsset ? Number(solAsset.balance) / LAMPORTS_PER_SOL : 0;
-    const trackedNetSOL = totalDepositsSOL - totalWithdrawalsSOL;
-    const hasUntrackedDeposits = actualSOLBalance > (trackedNetSOL * 1.01); // 1% tolerance
-
-    let message = `*📈 Group Portfolio: ${escapeMarkdownV2(pot.name || "Unnamed Pot")}*\n\n`;
-    message += `\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\n\n`;
-    
-    message += `*Key Metrics*\n\n`;
-    message += `*Total Value Locked \\(TVL\\):* \\$${escapeMarkdownV2Amount(potValueUSD)}\n`;
-    message += `*All\\-Time PnL:* ${pnlSign}\\$${escapeMarkdownV2Amount(Math.abs(allTimePnLUSD))} \\(${pnlSign}${escapeMarkdownV2Amount(Math.abs(allTimePnLPercentage))}%\\) ${pnlEmoji}\n`;
-    message += `*Tracked Deposits:* \\$${escapeMarkdownV2Amount(totalDepositsUSD)}\n`;
-    message += `*Tracked Withdrawals:* \\$${escapeMarkdownV2Amount(totalWithdrawalsUSD)}\n`;
-    
-    if (hasUntrackedDeposits) {
-      message += `\n_ℹ️ Note: Current balance suggests additional deposits made outside bot \\(e\\.g\\. via Phantom\\)\\. PnL may be higher than actual\\._\n`;
-    }
-    message += `\n`;
-    
-    message += `\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\n\n`;
-    message += `*Asset Allocation*`;
-    message += assetAllocation;
-    
-    message += `\n\n\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\n\n`;
-    message += `*Pot Statistics*\n\n`;
-    message += `*Members:* \`${pot.members.length}\`\n`;
-    message += `*Total Shares Issued:* \`${escapeMarkdownV2Amount(Number(pot.totalShares))}\`\n`;
-    message += `*Net Asset Value \\(NAV\\) per Share:* \\$${escapeMarkdownV2Amount(navPerShareUSD)}\n`;
-    message += `*Inception Date:* \`${escapeMarkdownV2(inceptionDate)}\`\n`;
-
-    await ctx.replyWithMarkdownV2(message);
-    await ctx.answerCbQuery();
-
-  } catch (error: any) {
-    console.error("Group portfolio error:", error);
-    await ctx.reply("❌ Failed to load group portfolio. Please try again.");
-    await ctx.answerCbQuery("Error loading portfolio");
-  }
-})
+  await handlePortfolio(ctx);
+  await ctx.answerCbQuery();
+});
 
 bot.action("buy", (ctx) => ctx.scene.enter("buy_token_with_sol_wizard"));
 bot.action("buy_asset_with_solana_group", (ctx) => ctx.scene.enter("buy_token_with_sol_wizard_group"));
