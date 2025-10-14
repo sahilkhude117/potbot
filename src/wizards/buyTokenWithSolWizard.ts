@@ -5,7 +5,7 @@ import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey, VersionedTransaction 
 import { SOL_MINT } from "../lib/statits";
 import { decodeSecretKey, escapeMarkdownV2, escapeMarkdownV2Amount } from "../lib/utils";
 import { getBalanceMessage } from "../solana/getBalance";
-import { swap } from "../solana/swapAssetsWithJup";
+import { executeSwap, getQuote, swap } from "../solana/swapAssetsWithJup";
 
 const connection = new Connection(process.env.MAINNET_RPC_URL!, 'confirmed');
 
@@ -118,22 +118,33 @@ export const buyTokenWithSolWizard = new Scenes.WizardScene<BotContext>(
         const loadingMsg = await ctx.reply("⏳ Fetching quote...");
 
         try {
-            const swapTxn = await swap(
+            const quoteResponse = await getQuote(
                 SOL_MINT,
                 state.tokenMint,
                 Number(quantity * LAMPORTS_PER_SOL),
                 user.publicKey
             );
 
-            state.quoteData = swapTxn;
+            state.quoteData =  quoteResponse;
+
+            const inputAmount = Number(quoteResponse.inAmount) / LAMPORTS_PER_SOL;
+            const outputAmount = Number(quoteResponse.outAmount);
+            const priceImpact = quoteResponse.priceImpactPct || "0";
+            const usdValue = quoteResponse.swapUsdValue || "0";
+
+            const outputDecimals = 6;
+            const outputAmountFormatted = outputAmount / Math.pow(10, outputDecimals);
 
             await ctx.deleteMessage(loadingMsg.message_id);
 
             await ctx.replyWithMarkdownV2(
                 `💰 *Swap Quote*\n\n` +
-                `📤 *You Pay:* ${escapeMarkdownV2Amount(quantity)} SOL\n` +
-                `📥 *Token Mint:* \`${escapeMarkdownV2(state.tokenMint)}\`\n\n` +
-                `⚠️ *Slippage:* 5%\n\n` +
+                `*You Pay:* ${escapeMarkdownV2Amount(inputAmount)} SOL\n` +
+                `*You Receive:* ≈ ${escapeMarkdownV2Amount(outputAmountFormatted)} tokens\n` +
+                `*USD Value:* \\$${escapeMarkdownV2(parseFloat(usdValue).toFixed(4))}\n\n` +
+                `*Price Impact:* ${escapeMarkdownV2(priceImpact)}%\n` +
+                `*Slippage Tolerance:* ${escapeMarkdownV2((quoteResponse.slippageBps / 100).toString())}%\n` +
+                `🪙 *Token:* \`${escapeMarkdownV2(state.tokenMint.substring(0, 8))}\\.\\.\\.\`\n\n` +
                 `Do you want to proceed with this swap?`,
                 Markup.inlineKeyboard([
                     [
@@ -185,35 +196,55 @@ buyTokenWithSolWizard.action("wizard_confirm_buy", async (ctx) => {
         const processingMsg = await ctx.reply("⏳ Processing your swap...")
 
         try {
+            const swapTransaction = await executeSwap(
+                state.quoteData,
+                user.publicKey
+            );
+
+            state.swapTxn = swapTransaction;
+
             const tx = await VersionedTransaction.deserialize(
-                Uint8Array.from(atob(state.quoteData), c => c.charCodeAt(0))
+                Uint8Array.from(atob(swapTransaction), c => c.charCodeAt(0))
             );
             tx.sign([userKeypair]);
 
             const signature = await connection.sendTransaction(tx);
 
             await ctx.deleteMessage(processingMsg.message_id);
+
+            const inputAmount = Number(state.quoteData.inAmount) / LAMPORTS_PER_SOL;
+            const outputAmount = Number(state.quoteData.outAmount);
+            const usdValue = state.quoteData.swapUsdValue || "0";
+
+            const outputDecimals = 6;
+            const outputAmountFormatted = outputAmount / Math.pow(10, outputDecimals);
             await ctx.replyWithMarkdownV2(
                 `✅ *Swap Successful\\!*\n\n` +
-                `🔗 [View Transaction](https://explorer.solana.com/tx/${escapeMarkdownV2(signature)})\n\n` +
-                `💰 Spent: ${escapeMarkdownV2Amount(state.quantity)} SOL\n` +
-                `🪙 Token: \`${escapeMarkdownV2(state.tokenMint)}\``,
-                { 
-                    link_preview_options: {
-                        is_disabled: true
-                    }
-                }
+                `💰 *Spent:* ${escapeMarkdownV2Amount(inputAmount)} SOL\n` +
+                `🪙 *Received:* ≈ ${escapeMarkdownV2Amount(outputAmountFormatted)} tokens\n` +
+                `💵 *Value:* \\$${escapeMarkdownV2(parseFloat(usdValue).toFixed(4))}\n\n` +
+                `📝 *Token:* \`${escapeMarkdownV2(state.tokenMint.substring(0, 8))}\\.\\.\\.\`\n\n` +
+                `🔗 [View on Explorer](https://explorer.solana.com/tx/${escapeMarkdownV2(signature)})\n\n` +
+                `_Transaction confirmed\\!_`,
             );
         } catch (error: any) {
             console.error("Swap error:", error);
             await ctx.deleteMessage(processingMsg.message_id);
-            await ctx.reply(
-                `❌ Swap failed. Possible reasons:\n\n` +
-                `• Network congestion\n` +
-                `• Price changed significantly\n` +
-                `• Insufficient balance for fees\n\n` +
-                `Please try again.`
-            );
+            
+            let errorMsg = "❌ *Swap Failed*\n\n";
+            
+            if (error.message?.includes("slippage")) {
+                errorMsg += "⚠️ Price moved beyond slippage tolerance\\.\n\n";
+                errorMsg += "_Try again or use a different amount\\._";
+            } else if (error.message?.includes("insufficient")) {
+                errorMsg += "⚠️ Insufficient balance for transaction fees\\.\n\n";
+                errorMsg += `_You need ≈0\\.001 SOL extra for fees\\._`;
+            } else {
+                errorMsg += `⚠️ Transaction failed\\.\n\n`;
+                errorMsg += `_${escapeMarkdownV2(error.message?.substring(0, 100) || "Network error")}_`;
+            }
+            
+            await ctx.replyWithMarkdownV2(errorMsg);
         }
     } catch (error) {
         console.error(error);

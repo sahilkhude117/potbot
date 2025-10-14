@@ -20,6 +20,7 @@ export interface BuyTokenWizardState {
     tokenSymbol?: string;
     quantity: number;
     quoteData?: any;
+    swapTxn?: any;
 }
 
 export interface SessionData extends Scenes.WizardSession<DepositWizardState> {}
