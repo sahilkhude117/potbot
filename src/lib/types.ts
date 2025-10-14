@@ -14,6 +14,14 @@ export interface WithdrawalWizardState extends Scenes.WizardSessionData {
     sharesToBurn: bigint;
 }
 
+export interface BuyTokenWizardState {
+    userId: string;
+    tokenMint: string;
+    tokenSymbol?: string;
+    quantity: number;
+    quoteData?: any;
+}
+
 export interface SessionData extends Scenes.WizardSession<DepositWizardState> {}
 
 export interface BotContext extends Context {

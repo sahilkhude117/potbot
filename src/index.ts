@@ -13,14 +13,14 @@ import { getPriceInUSD } from "./solana/getPriceInUSD";
 import { SOL_MINT } from "./lib/statits";
 import { getUserPosition } from "./solana/getUserPosition";
 import { swap } from "./solana/swapAssetsWithJup";
+import { buyTokenWithSolWizard } from "./wizards/buyTokenWithSolWizard";
 
 const bot = new Telegraf<BotContext>(process.env.TELEGRAM_BOT_TOKEN!)
-
-const connection = new Connection(process.env.MAINNET_RPC_URL!, 'confirmed');
 
 const stage = new Scenes.Stage<BotContext>([
   depositSolToVaultWizard,
   withdrawFromVaultWizard,
+  buyTokenWithSolWizard,
 ]);
 bot.use(session());
 bot.use(stage.middleware());
@@ -341,27 +341,7 @@ bot.command("portfolio", async ctx => {
   }
 })
 
-bot.command("swap", async (ctx) => {
-  const existingUser = await prismaClient.user.findFirst({
-    where: {
-      telegramUserId: ctx.from.id.toString()
-    }
-  })
-  const tokenMint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
-  const quantity = 0.00006;
-  const userKeypair = Keypair.fromSecretKey(decodeSecretKey(existingUser?.privateKey as string));
-
-  try {
-    const swapTxn = await swap(SOL_MINT, tokenMint, Number(quantity) * LAMPORTS_PER_SOL, existingUser?.publicKey!);
-    const tx = VersionedTransaction.deserialize(Uint8Array.from(atob(swapTxn), c => c.charCodeAt(0)));
-    tx.sign([userKeypair]);
-    const sign = await connection.sendTransaction(tx);
-    ctx.reply(`Swap successful, you can track it here https://explorer.solana.com/tx/${sign}`);
-  } catch (error) {
-    console.log(error);
-    ctx.reply(`Error while doing a swap`);
-  }
-})
+bot.action("buy", (ctx) => ctx.scene.enter("buy_token_with_sol_wizard"));
 
 bot.action("public_key", async ctx => {
     const existingUser = await prismaClient.user.findFirst({
