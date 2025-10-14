@@ -23,6 +23,17 @@ export interface BuyTokenWizardState {
     swapTxn?: any;
 }
 
+export interface BuyTokenGroupWizardState extends Scenes.WizardSessionData {
+    userId: string;
+    potId: string;
+    tokenMint: string;
+    quantity: number;
+    vaultBalance: number;
+    vaultPrivateKey: string;
+    isAdmin: boolean;
+    quoteData: any;
+}
+
 export interface SessionData extends Scenes.WizardSession<DepositWizardState> {}
 
 export interface BotContext extends Context {

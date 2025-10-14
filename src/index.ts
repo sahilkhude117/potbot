@@ -14,6 +14,7 @@ import { SOL_MINT } from "./lib/statits";
 import { getUserPosition } from "./solana/getUserPosition";
 import { swap } from "./solana/swapAssetsWithJup";
 import { buyTokenWithSolWizard } from "./wizards/buyTokenWithSolWizard";
+import { buyTokenWithSolWizardGroup } from "./wizards/buyTokenWithSolGroupWizard";
 
 const bot = new Telegraf<BotContext>(process.env.TELEGRAM_BOT_TOKEN!)
 
@@ -21,6 +22,7 @@ const stage = new Scenes.Stage<BotContext>([
   depositSolToVaultWizard,
   withdrawFromVaultWizard,
   buyTokenWithSolWizard,
+  buyTokenWithSolWizardGroup
 ]);
 bot.use(session());
 bot.use(stage.middleware());
@@ -140,7 +142,12 @@ bot.start(async (ctx) => {
 
 bot.command('deposit', (ctx) => ctx.scene.enter("deposit_sol_to_vault_wizard"))
 
-bot.command('withdraw', (ctx) => ctx.scene.enter("withdraw_from_vault_wizard"))
+bot.action("buy_asset_with_solana_group", (ctx) => {
+    if (ctx.chat?.type === 'private') {
+        return ctx.reply("❌ This action is only available in pot group chats.");
+    }
+    return ctx.scene.enter("buy_token_with_sol_wizard_group");
+});
 
 bot.command("portfolio", async ctx => {
   try {
@@ -345,6 +352,7 @@ bot.command("portfolio", async ctx => {
 })
 
 bot.action("buy", (ctx) => ctx.scene.enter("buy_token_with_sol_wizard"));
+bot.action("buy_asset_with_solana_group", (ctx) => ctx.scene.enter("buy_token_with_sol_wizard_group"));
 
 bot.action("public_key", async ctx => {
     const existingUser = await prismaClient.user.findFirst({
@@ -695,17 +703,6 @@ bot.on(message('new_chat_members'), async (ctx) => {
     }  
   }
 });
-
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -1208,5 +1205,8 @@ bot.command("traderhelp", async (ctx) => {
 });
 
 bot.launch()
+    .then(() => console.log("✅ Bot started successfully"))
+    .catch((err) => console.error("❌ Failed to start bot:", err));
 
-console.log(`Bot Is Running`)
+process.once("SIGINT", () => bot.stop("SIGINT"));
+process.once("SIGTERM", () => bot.stop("SIGTERM"));
