@@ -4,7 +4,7 @@ import { ADD_POTBOT_TO_GROUP, CREATE_INVITE_DONE_KEYBOARD, CREATE_NEW_POT, DEFAU
 import { Connection, Keypair, LAMPORTS_PER_SOL, VersionedTransaction}  from "@solana/web3.js";
 import { getBalanceMessage } from "./solana/getBalance";
 import { createMockVault } from "./solana/createVault";
-import { decodeSecretKey, escapeMarkdownV2, escapeMarkdownV2Amount } from "./lib/utils";
+import { escapeMarkdownV2, escapeMarkdownV2Amount } from "./lib/utils";
 import { depositSolToVaultWizard } from "./wizards/depositWizard";
 import { withdrawFromVaultWizard } from "./wizards/withdrawalWizard";
 import type { BotContext } from "./lib/types";
@@ -12,9 +12,10 @@ import { message } from "telegraf/filters";
 import { getPriceInUSD } from "./solana/getPriceInUSD";
 import { SOL_MINT } from "./lib/statits";
 import { getUserPosition } from "./solana/getUserPosition";
-import { swap } from "./solana/swapAssetsWithJup";
 import { buyTokenWithSolWizard } from "./wizards/buyTokenWithSolWizard";
 import { buyTokenWithSolWizardGroup } from "./wizards/buyTokenWithSolGroupWizard";
+import { computePotValueInUSD } from "./solana/computePotValueInUSD";
+import { getTokenDecimalsWithCache } from "./solana/getTokenDecimals";
 
 const bot = new Telegraf<BotContext>(process.env.TELEGRAM_BOT_TOKEN!)
 
@@ -282,18 +283,19 @@ bot.command("portfolio", async ctx => {
 
     potDetails.sort((a, b) => b.pnlPercentage - a.pnlPercentage);
 
-    let message = `📊 *Your Portfolio Summary*\n\n`;
+    let message = `*📊 Your Personal Portfolio*\n\n`;
+    message += `\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\n\n`;
 
-    message += `*Total Deposited:* \\$${escapeMarkdownV2Amount(totalDepositedUSD)} \\(${escapeMarkdownV2Amount(depositedSOL)} SOL\\)\n`;
-    message += `*Total Withdrawn:* \\$${escapeMarkdownV2Amount(totalWithdrawnUSD)} \\(${escapeMarkdownV2Amount(withdrawnSOL)} SOL\\)\n`;
-    message += `*Current Holdings:* \\$${escapeMarkdownV2Amount(totalCurrentValueUSD)} \\(${escapeMarkdownV2Amount(totalSOL)} SOL\\)\n`;
+    message += `*Key Metrics*\n\n`;
+    message += `*Total Deposited:* \\$${escapeMarkdownV2Amount(totalDepositedUSD)}\n`;
+    message += `*Total Withdrawn:* \\$${escapeMarkdownV2Amount(totalWithdrawnUSD)}\n`;
+    message += `*Current Holdings:* \\$${escapeMarkdownV2Amount(totalCurrentValueUSD)}\n`;
     message += `*Total Value:* \\$${escapeMarkdownV2Amount(totalCurrentValueUSD + totalWithdrawnUSD)}\n`;
-    message += `*Total P&L:* ${pnlSign}\\$${escapeMarkdownV2Amount(Math.abs(totalPnL))} \\(${pnlSign}${escapeMarkdownV2Amount(Math.abs(totalPnLPercentage))}%\\) ${pnlEmoji}\n\n`;
+    message += `*All\\-Time P&L:* ${pnlSign}\\$${escapeMarkdownV2Amount(Math.abs(totalPnL))} \\(${pnlSign}${escapeMarkdownV2Amount(Math.abs(totalPnLPercentage))}%\\) ${pnlEmoji}\n\n`;
     
-    message += `\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\n\n`;
+    message += `\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\n\n`;
     
-    // Individual pot breakdown
-    message += `💼 *Your Pots Breakdown*\n\n`;
+    message += `*💼 Your Pots Breakdown*\n\n`;
 
     for (let i = 0; i < potDetails.length; i++) {
         const pot = potDetails[i];
@@ -302,45 +304,43 @@ bot.command("portfolio", async ctx => {
         const potPnlSign = pot.pnl >= 0 ? "\\+" : "";
         const statusEmoji = pot.isActive ? "📈" : "📤"; 
         
-        message += `${statusEmoji} *${i + 1}\\. ${escapeMarkdownV2(pot.name)}*\n`;
-        if (pot.isActive) {
-            message += `   *Your Share:* ${escapeMarkdownV2(pot.sharePercentage.toFixed(2))}% of pot\n`;
-        }
-        message += `   *Deposited:* \\$${escapeMarkdownV2Amount(pot.depositedUSD)}\n`;
+        message += `${statusEmoji} *${escapeMarkdownV2(pot.name)}*\n`;
+        message += `> Deposited: \\$${escapeMarkdownV2Amount(pot.depositedUSD)}\n`;
         if (pot.withdrawnUSD > 0) {
-            message += `   *Withdrawn:* \\$${escapeMarkdownV2Amount(pot.withdrawnUSD)}\n`;
+            message += `> Withdrawn: \\$${escapeMarkdownV2Amount(pot.withdrawnUSD)}\n`;
         }
-        message += `   *Current:* \\$${escapeMarkdownV2Amount(pot.currentValueUSD)}\n`;
-        message += `   *Total Value:* \\$${escapeMarkdownV2Amount(pot.currentValueUSD + pot.withdrawnUSD)}\n`;
-        message += `   *P&L:* ${potPnlSign}\\$${escapeMarkdownV2Amount(Math.abs(pot.pnl))} \\(${potPnlSign}${escapeMarkdownV2Amount(Math.abs(pot.pnlPercentage))}%\\) ${potPnlEmoji}\n`;
+        message += `> Current Value: \\$${escapeMarkdownV2Amount(pot.currentValueUSD)}\n`;
+        if (pot.isActive) {
+            message += `> Your Share: ${escapeMarkdownV2(pot.sharePercentage.toFixed(2))}%\n`;
+        }
+        message += `> P&L: ${potPnlSign}\\$${escapeMarkdownV2Amount(Math.abs(pot.pnl))} \\(${potPnlSign}${escapeMarkdownV2Amount(Math.abs(pot.pnlPercentage))}%\\) ${potPnlEmoji}\n`;
         
         if (i < potDetails.length - 1) {
             message += `\n`;
         }
     }
 
-    message += `\n\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\n\n`;
-        
-    if (potDetails.length > 0) {
-        const bestPot = potDetails[0];
-        if (bestPot && bestPot.pnlPercentage > 0) {
-            message += `🏆 *Best Performer:* ${escapeMarkdownV2(bestPot.name)} \\(\\+${escapeMarkdownV2Amount(bestPot.pnlPercentage)}%\\)\n\n`;
-        }
-    }
-
+    message += `\n\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\n\n`;
+    
+    message += `*Portfolio Statistics*\n\n`;
     const totalPots = potDetails.length;
     const activePots = potDetails.filter(p => p.isActive).length;
     const profitablePots = potDetails.filter(p => p.pnl > 0).length;
-    message += `📈 *Quick Stats*\n`;
-    message += `   Total Pots: ${totalPots} \\(${activePots} active\\)\n`;
-    message += `   Profitable: ${profitablePots} / ${totalPots}\n`;
+    message += `*Pots:* ${totalPots} total \\(${activePots} active\\)\n`;
+    message += `*Profitable Pots:* ${profitablePots} / ${totalPots}\n`;
     if (activePots > 0) {
         const avgActivePotSize = totalCurrentValueUSD / activePots;
-        message += `   Avg Active Pot: \\$${escapeMarkdownV2Amount(avgActivePotSize)}\n`;
+        message += `*Avg Pot Value:* \\$${escapeMarkdownV2Amount(avgActivePotSize)}\n`;
     }
-    message += `\n`;
     
-    message += `_Last updated: ${escapeMarkdownV2(new Date().toLocaleString())}_`;
+    if (potDetails.length > 0) {
+        const bestPot = potDetails[0];
+        if (bestPot && bestPot.pnlPercentage > 0) {
+            message += `*Best Performer:* ${escapeMarkdownV2(bestPot.name)} \\(\\+${escapeMarkdownV2Amount(bestPot.pnlPercentage)}%\\)\n`;
+        }
+    }
+    
+    message += `\n_Last updated: ${escapeMarkdownV2(new Date().toLocaleString())}_`;
 
     await ctx.replyWithMarkdownV2(message);
 
@@ -348,6 +348,149 @@ bot.command("portfolio", async ctx => {
     console.error("Portfolio error:", e);
     await ctx.reply("Opps! Cant load your portfolio now");
 
+  }
+})
+
+bot.action("portfolio", async (ctx) => {
+  try {
+    const isGroup = (ctx.chat?.type === "group" || ctx.chat?.type === "supergroup");
+
+    if (!isGroup) {
+      return ctx.answerCbQuery("Use /portfolio command in private chat for your personal portfolio.");
+    }
+
+    const pot = await prismaClient.pot.findUnique({
+      where: {
+        telegramGroupId: ctx.chat.id.toString()
+      },
+      include: {
+        assets: true,
+        members: true
+      }
+    });
+
+    if (!pot) {
+      return ctx.reply("❌ No pot found for this group.");
+    }
+
+    const solPrice = await getPriceInUSD(SOL_MINT);
+
+    // Calculate current pot value
+    const potValueUSD = await computePotValueInUSD(
+      pot.assets.map(a => ({ mintAddress: a.mintAddress, balance: a.balance }))
+    );
+    const potValueSOL = potValueUSD / solPrice;
+
+    // Get deposit and withdrawal records (tracked through the bot)
+    const deposits = await prismaClient.deposit.findMany({
+      where: { potId: pot.id }
+    });
+
+    const withdrawals = await prismaClient.withdrawal.findMany({
+      where: { potId: pot.id }
+    });
+
+    // Calculate totals from records
+    const totalDepositsLamports = deposits.reduce((sum, d) => sum + d.amount, BigInt(0));
+    const totalWithdrawalsLamports = withdrawals.reduce((sum, w) => sum + w.amountOut, BigInt(0));
+    
+    const totalDepositsSOL = Number(totalDepositsLamports) / LAMPORTS_PER_SOL;
+    const totalWithdrawalsSOL = Number(totalWithdrawalsLamports) / LAMPORTS_PER_SOL;
+
+    const totalDepositsUSD = totalDepositsSOL * solPrice;
+    const totalWithdrawalsUSD = totalWithdrawalsSOL * solPrice;
+
+    const allTimePnLUSD = (potValueUSD + totalWithdrawalsUSD) - totalDepositsUSD;
+    const allTimePnLSOL = allTimePnLUSD / solPrice;
+  
+    const allTimePnLPercentage = totalDepositsUSD > 0 ? (allTimePnLUSD / totalDepositsUSD) * 100 : 0;
+
+    const pnlEmoji = allTimePnLSOL >= 0 ? "🟢" : "🔴";
+    const pnlSign = allTimePnLSOL >= 0 ? "+" : "";
+
+    let assetAllocation = "";
+    const sortedAssets = [...pot.assets].sort((a, b) => {
+      const aValue = Number(b.balance);
+      const bValue = Number(a.balance);
+      return bValue - aValue;
+    });
+
+    for (const asset of sortedAssets) {
+      if (asset.balance === BigInt(0)) continue;
+
+      const decimals = await getTokenDecimalsWithCache(asset.mintAddress);
+      const balanceReadable = Number(asset.balance) / (10 ** decimals);
+      const priceUSD = await getPriceInUSD(asset.mintAddress);
+      const valueUSD = balanceReadable * priceUSD;
+      const valueSOL = valueUSD / solPrice;
+      const percentage = potValueUSD > 0 ? (valueUSD / potValueUSD) * 100 : 0;
+
+      let symbol = "TOKEN";
+      let emoji = "🪙";
+      if (asset.mintAddress === SOL_MINT) {
+        symbol = "SOL";
+        emoji = "🪙";
+      } else if (asset.mintAddress === "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v") {
+        symbol = "USDC";
+        emoji = "💵";
+      } else {
+        symbol = asset.mintAddress.substring(0, 4).toUpperCase();
+        emoji = "🎯";
+      }
+
+      assetAllocation += `\n${emoji} *${escapeMarkdownV2(symbol)}:*\n`;
+      assetAllocation += `> Balance: \`${escapeMarkdownV2Amount(balanceReadable)}\`\n`;
+      assetAllocation += `> Value: \\$${escapeMarkdownV2Amount(valueUSD)} \\(${escapeMarkdownV2Amount(percentage)}%\\)\n`;
+    }
+
+    const navPerShareUSD = pot.totalShares > BigInt(0) 
+      ? potValueUSD / Number(pot.totalShares) 
+      : 0;
+
+    const inceptionDate = pot.createdAt.toLocaleDateString('en-US', { 
+      month: 'short', 
+      day: 'numeric', 
+      year: 'numeric' 
+    });
+
+    // Check if there might be untracked deposits (direct transfers)
+    const solAsset = pot.assets.find(a => a.mintAddress === SOL_MINT);
+    const actualSOLBalance = solAsset ? Number(solAsset.balance) / LAMPORTS_PER_SOL : 0;
+    const trackedNetSOL = totalDepositsSOL - totalWithdrawalsSOL;
+    const hasUntrackedDeposits = actualSOLBalance > (trackedNetSOL * 1.01); // 1% tolerance
+
+    let message = `*📈 Group Portfolio: ${escapeMarkdownV2(pot.name || "Unnamed Pot")}*\n\n`;
+    message += `\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\n\n`;
+    
+    message += `*Key Metrics*\n\n`;
+    message += `*Total Value Locked \\(TVL\\):* \\$${escapeMarkdownV2Amount(potValueUSD)}\n`;
+    message += `*All\\-Time PnL:* ${pnlSign}\\$${escapeMarkdownV2Amount(Math.abs(allTimePnLUSD))} \\(${pnlSign}${escapeMarkdownV2Amount(Math.abs(allTimePnLPercentage))}%\\) ${pnlEmoji}\n`;
+    message += `*Tracked Deposits:* \\$${escapeMarkdownV2Amount(totalDepositsUSD)}\n`;
+    message += `*Tracked Withdrawals:* \\$${escapeMarkdownV2Amount(totalWithdrawalsUSD)}\n`;
+    
+    if (hasUntrackedDeposits) {
+      message += `\n_ℹ️ Note: Current balance suggests additional deposits made outside bot \\(e\\.g\\. via Phantom\\)\\. PnL may be higher than actual\\._\n`;
+    }
+    message += `\n`;
+    
+    message += `\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\n\n`;
+    message += `*Asset Allocation*`;
+    message += assetAllocation;
+    
+    message += `\n\n\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\n\n`;
+    message += `*Pot Statistics*\n\n`;
+    message += `*Members:* \`${pot.members.length}\`\n`;
+    message += `*Total Shares Issued:* \`${escapeMarkdownV2Amount(Number(pot.totalShares))}\`\n`;
+    message += `*Net Asset Value \\(NAV\\) per Share:* \\$${escapeMarkdownV2Amount(navPerShareUSD)}\n`;
+    message += `*Inception Date:* \`${escapeMarkdownV2(inceptionDate)}\`\n`;
+
+    await ctx.replyWithMarkdownV2(message);
+    await ctx.answerCbQuery();
+
+  } catch (error: any) {
+    console.error("Group portfolio error:", error);
+    await ctx.reply("❌ Failed to load group portfolio. Please try again.");
+    await ctx.answerCbQuery("Error loading portfolio");
   }
 })
 

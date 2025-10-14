@@ -39,7 +39,5 @@ export const CHECK_BALANCE_KEYBOARD = Markup.inlineKeyboard([
 export const DEFAULT_GROUP_KEYBOARD = Markup.inlineKeyboard([[
     Markup.button.callback("Buy", "buy_asset_with_solana_group",)
 ],[
-    Markup.button.callback("Traders", "traders")
-],[
     Markup.button.callback("Portfolio", "portfolio")
 ]])
