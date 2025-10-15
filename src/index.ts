@@ -15,6 +15,7 @@ import { getUserPosition } from "./solana/getUserPosition";
 import { buyTokenWithSolWizard } from "./wizards/buyTokenWithSolWizard";
 import { buyTokenWithSolWizardGroup } from "./wizards/buyTokenWithSolGroupWizard";
 import { sellTokenForSolWizard } from "./wizards/sellTokenForSolWizard";
+import { sellTokenForSolWizardGroup } from "./wizards/sellTokenForSolGroupWizard";
 import { computePotValueInUSD } from "./solana/computePotValueInUSD";
 import { getTokenDecimalsWithCache } from "./solana/getTokenDecimals";
 
@@ -25,7 +26,8 @@ const stage = new Scenes.Stage<BotContext>([
   withdrawFromVaultWizard,
   buyTokenWithSolWizard,
   buyTokenWithSolWizardGroup,
-  sellTokenForSolWizard
+  sellTokenForSolWizard,
+  sellTokenForSolWizardGroup
 ]);
 bot.use(session());
 bot.use(stage.middleware());
@@ -489,7 +491,7 @@ bot.action("portfolio", async (ctx) => {
 });
 
 bot.action("buy", (ctx) => ctx.scene.enter("buy_token_with_sol_wizard"));
-bot.action("buy_asset_with_solana_group", (ctx) => {
+bot.action("buy_token_with_solana_group", (ctx) => {
     if (ctx.chat?.type === 'private') {
         return ctx.reply("❌ This action is only available in pot group chats.");
     }
@@ -497,6 +499,13 @@ bot.action("buy_asset_with_solana_group", (ctx) => {
 });
 
 bot.action("sell", (ctx) => ctx.scene.enter("sell_token_for_sol_wizard"))
+
+bot.action("sell_token_for_solana_group", (ctx) => {
+    if (ctx.chat?.type === 'private') {
+        return ctx.reply("❌ This action is only available in pot group chats.");
+    }
+    return ctx.scene.enter("sell_token_for_sol_wizard_group");
+});
 
 bot.action("public_key", async ctx => {
     const existingUser = await prismaClient.user.findFirst({
