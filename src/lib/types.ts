@@ -37,6 +37,16 @@ export interface BuyTokenGroupWizardState extends Scenes.WizardSessionData {
     quoteData: any;
 }
 
+export interface SellTokenWizardState extends Scenes.WizardSessionData {
+    userId: string;
+    tokenMint: string;
+    tokenSymbol: string;
+    tokenBalance: number;
+    tokenDecimals: number;
+    quantity: number;
+    quoteData?: any;
+}
+
 export interface SessionData extends Scenes.WizardSession<DepositWizardState> {}
 
 export interface BotContext extends Context {

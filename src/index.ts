@@ -14,6 +14,7 @@ import { SOL_MINT } from "./lib/statits";
 import { getUserPosition } from "./solana/getUserPosition";
 import { buyTokenWithSolWizard } from "./wizards/buyTokenWithSolWizard";
 import { buyTokenWithSolWizardGroup } from "./wizards/buyTokenWithSolGroupWizard";
+import { sellTokenForSolWizard } from "./wizards/sellTokenForSolWizard";
 import { computePotValueInUSD } from "./solana/computePotValueInUSD";
 import { getTokenDecimalsWithCache } from "./solana/getTokenDecimals";
 
@@ -23,7 +24,8 @@ const stage = new Scenes.Stage<BotContext>([
   depositSolToVaultWizard,
   withdrawFromVaultWizard,
   buyTokenWithSolWizard,
-  buyTokenWithSolWizardGroup
+  buyTokenWithSolWizardGroup,
+  sellTokenForSolWizard
 ]);
 bot.use(session());
 bot.use(stage.middleware());
@@ -143,12 +145,6 @@ bot.start(async (ctx) => {
 
 bot.command('deposit', (ctx) => ctx.scene.enter("deposit_sol_to_vault_wizard"))
 
-bot.action("buy_asset_with_solana_group", (ctx) => {
-    if (ctx.chat?.type === 'private') {
-        return ctx.reply("❌ This action is only available in pot group chats.");
-    }
-    return ctx.scene.enter("buy_token_with_sol_wizard_group");
-});
 
 async function handlePortfolio(ctx: any) {
   try {
@@ -493,7 +489,14 @@ bot.action("portfolio", async (ctx) => {
 });
 
 bot.action("buy", (ctx) => ctx.scene.enter("buy_token_with_sol_wizard"));
-bot.action("buy_asset_with_solana_group", (ctx) => ctx.scene.enter("buy_token_with_sol_wizard_group"));
+bot.action("buy_asset_with_solana_group", (ctx) => {
+    if (ctx.chat?.type === 'private') {
+        return ctx.reply("❌ This action is only available in pot group chats.");
+    }
+    return ctx.scene.enter("buy_token_with_sol_wizard_group");
+});
+
+bot.action("sell", (ctx) => ctx.scene.enter("sell_token_for_sol_wizard"))
 
 bot.action("public_key", async ctx => {
     const existingUser = await prismaClient.user.findFirst({
@@ -844,8 +847,6 @@ bot.on(message('new_chat_members'), async (ctx) => {
     }  
   }
 });
-
-
 
 bot.command("settrader", async (ctx) => {
   try {
