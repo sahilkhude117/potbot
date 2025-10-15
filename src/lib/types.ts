@@ -5,6 +5,7 @@ export interface DepositWizardState extends Scenes.WizardSessionData {
   potId: string;
   potName: string;
   amount: number;
+  userBalance: number;
 }
 
 export interface WithdrawalWizardState extends Scenes.WizardSessionData {
@@ -12,6 +13,7 @@ export interface WithdrawalWizardState extends Scenes.WizardSessionData {
     potId: string;
     potName: string;
     sharesToBurn: bigint;
+    userShares: bigint;
 }
 
 export interface BuyTokenWizardState {
@@ -19,6 +21,7 @@ export interface BuyTokenWizardState {
     tokenMint: string;
     tokenSymbol?: string;
     quantity: number;
+    balance: number;
     quoteData?: any;
     swapTxn?: any;
 }

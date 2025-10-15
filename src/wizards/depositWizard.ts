@@ -63,6 +63,8 @@ export const depositSolToVaultWizard = new Scenes.WizardScene<BotContext>(
                 buttons.push(row);
             }
 
+            buttons.push([Markup.button.callback("❌ Cancel", "wizard_cancel_deposit")]);
+
             await ctx.reply(
                 "*Please select a pot to deposit into:*",
                 {
@@ -85,34 +87,36 @@ export const depositSolToVaultWizard = new Scenes.WizardScene<BotContext>(
         // handled in callback
     },
 
-    // 3. amount
     async (ctx) => {
         const state = ctx.wizard.state as DepositWizardState;
         const text = ('text' in (ctx.message ?? {}) ? (ctx.message as { text: string }).text : undefined)?.trim();
         const amount = parseFloat(text ?? '');
 
         if (isNaN(amount) || amount <= 0) {
-            return ctx.reply("❌ Please enter a valid number (e.g., 2.5)");
+            return ctx.reply("❌ Please enter a valid number (e.g., 0.5)");
         }
 
-        const lamports = amount * 1_000_000_000;
+        const lamports = amount * LAMPORTS_PER_SOL;
         if (lamports < 1) {
             return ctx.reply("❌ Amount too small — must be at least 0.000000001 SOL.");
+        }
+
+        if (amount > state.userBalance) {
+            await ctx.replyWithMarkdownV2(
+                `❌ *Insufficient Balance*\n\n` +
+                `You're trying to deposit ${escapeMarkdownV2Amount(amount)} SOL\\.\n` +
+                `You have only ${escapeMarkdownV2Amount(state.userBalance)} SOL\\.\n\n` +
+                `Please enter a smaller amount\\.`
+            );
             return;
         }
 
-        const user = await prismaClient.user.findUnique({ where: { id: state.userId } });
-        if (!user) {
-            await ctx.reply("User not found. Please register again.");
-            return ctx.scene.leave();
-        }
-
-        const fromKeypair = Keypair.fromSecretKey(decodeSecretKey(user.privateKey));
-        const { empty, balance } = await getBalanceMessage(fromKeypair.publicKey.toString());
-
-        if (empty || balance < amount) {
+        const minReserve = 0.005;
+        if (amount > state.userBalance - minReserve) {
             await ctx.replyWithMarkdownV2(
-            `❌ *Insufficient balance*\nYou have only ${escapeMarkdownV2Amount(balance)} SOL available\\. Please enter valid amount`
+                `❌ *Reserve SOL for Fees*\n\n` +
+                `Keep at least ${escapeMarkdownV2Amount(minReserve)} SOL for transaction fees\\.\n\n` +
+                `Maximum you can deposit: ${escapeMarkdownV2Amount(state.userBalance - minReserve)} SOL`
             );
             return;
         }
@@ -120,19 +124,22 @@ export const depositSolToVaultWizard = new Scenes.WizardScene<BotContext>(
         state.amount = amount;
 
         await ctx.replyWithMarkdownV2(
-            `💰 *Confirm deposit of ${escapeMarkdownV2Amount(amount)} SOL to pot:* _${escapeMarkdownV2(state.potName)}_`,
+            `💰 *Confirm Deposit*\n\n` +
+            `*Pot:* ${escapeMarkdownV2(state.potName)}\n` +
+            `*Amount:* ${escapeMarkdownV2Amount(amount)} SOL\n\n` +
+            `Do you want to proceed?`,
             Markup.inlineKeyboard([
-                [Markup.button.callback("✅ Confirm", "wizard_confirm_deposit"), 
-                Markup.button.callback("❌ Cancel", "wizard_cancel_deposit")],
+                [
+                    Markup.button.callback("✅ Confirm", "wizard_confirm_deposit"), 
+                    Markup.button.callback("❌ Cancel", "wizard_cancel_deposit")
+                ],
             ])
         );
 
         return ctx.wizard.next();
     },
 
-    // 4. wait for confirm/cancel
     async (ctx) => {
-        // handled in bot.action below
     },
 )
 
@@ -148,9 +155,36 @@ depositSolToVaultWizard.action(/wizard_select_pot_(.+)/, async (ctx) => {
     state.potId = pot.id;
     state.potName = pot.name;
 
-    await ctx.reply(`How much SOL do you want to deposit into *${escapeMarkdownV2(pot.name)}*?`, {
-        parse_mode: "MarkdownV2",
-    });
+    const user = await prismaClient.user.findUnique({ where: { id: state.userId } });
+    if (!user) {
+        await ctx.reply("❌ User not found. Please register again.");
+        return ctx.scene.leave();
+    }
+
+    const userKeypair = Keypair.fromSecretKey(decodeSecretKey(user.privateKey));
+    const { balance, empty } = await getBalanceMessage(userKeypair.publicKey.toString());
+
+    if (empty || balance < 0.001) {
+        await ctx.replyWithMarkdownV2(
+            `❌ *Insufficient Balance*\n\n` +
+            `You have only ${escapeMarkdownV2Amount(balance)} SOL\\.\n\n` +
+            `You need at least 0\\.001 SOL for deposits\\.\n\n` +
+            `_Please deposit SOL to your wallet first\\._`
+        );
+        return ctx.scene.leave();
+    }
+
+    state.userBalance = balance;
+
+    await ctx.replyWithMarkdownV2(
+        `💰 *Deposit to ${escapeMarkdownV2(pot.name)}*\n\n` +
+        `*Your Balance:* ${escapeMarkdownV2Amount(balance)} SOL\n\n` +
+        `How much SOL do you want to deposit\\?\n\n` +
+        `Enter the amount in SOL \\(e\\.g\\., 0\\.5\\)`,
+        Markup.inlineKeyboard([
+            [Markup.button.callback("❌ Cancel", "wizard_cancel_deposit")]
+        ])
+    );
 
     await ctx.answerCbQuery();
     ctx.wizard.selectStep(2);
@@ -161,11 +195,15 @@ depositSolToVaultWizard.action("wizard_confirm_deposit", async (ctx) => {
     const { potId, amount, userId } = state;
 
     try {
+        await ctx.answerCbQuery("Processing deposit...");
+        const processingMsg = await ctx.reply("⏳ Processing your deposit...");
+
         const pot = await prismaClient.pot.findUnique({ where: { id: potId }});
         const user = await prismaClient.user.findUnique({ where: { id: userId }});
 
         if (!pot || !user) {
-            await ctx.reply("Something went wrong. Please try again.");
+            await ctx.deleteMessage(processingMsg.message_id);
+            await ctx.reply("❌ Something went wrong. Please try again.");
             return ctx.scene.leave();
         }
 
@@ -173,56 +211,45 @@ depositSolToVaultWizard.action("wizard_confirm_deposit", async (ctx) => {
         const toVault = JSON.parse(pot.vaultAddress);
         const toPublicKey = new PublicKey(toVault.publicKey);
 
-        const { empty, balance } = await getBalanceMessage(fromKeypair.publicKey.toString());
+        const { message, success } = await sendSol(fromKeypair, toPublicKey, amount);
 
-        if (balance < amount) {
-            await ctx.replyWithMarkdownV2(
-                `Oops\\! Insufficient Balance`
-            );
-            return ctx.scene.leave();
-        } else {
-            const { message, success } = await sendSol(fromKeypair, toPublicKey, amount);
-
-            if (success) {
-                try {
-                    const mintedShares = await mintSharesAndDeposit(
-                        potId,
-                        userId,
-                        BigInt(amount * LAMPORTS_PER_SOL),
-                    );
-                    const newShares = mintedShares.userNewShares;
-                    const totalUserShares = mintedShares.sharesMinted;
-                    const totalPotShares = mintedShares.newTotalShares;
-
-                    const userPercentage = ((Number(totalUserShares) / Number(totalPotShares)) * 100).toFixed(2);
-                    const newSharesPercentage = ((Number(newShares) / Number(totalPotShares)) * 100).toFixed(2);
-                    await ctx.replyWithMarkdownV2(
-                        `✅ *Deposit successful\\!*\n\n` +
-                    escapeMarkdownV2(
-                        `Details \n\n` + 
-                        `New Shares: ${totalUserShares} (${userPercentage}%)\n\n` +
-                        `Your Total Shares: ${newShares} (${newSharesPercentage}%) \n\n` +
-                        `Total Shares: ${totalPotShares} \n\n` +
-                        `${message}`
-                    ));
-                } catch (e: any) {
-                    await ctx.replyWithMarkdownV2(
-                    `${e.message}`
-                    );
-                }
-            } else {
-                await ctx.replyWithMarkdownV2(
-                    `*\n\n${escapeMarkdownV2(message)}`
+        if (success) {
+            try {
+                const mintedShares = await mintSharesAndDeposit(
+                    potId,
+                    userId,
+                    BigInt(amount * LAMPORTS_PER_SOL),
                 );
+                const newShares = mintedShares.sharesMinted;
+                const totalUserShares = mintedShares.userNewShares;
+                const totalPotShares = mintedShares.newTotalShares;
+
+                const userPercentage = ((Number(totalUserShares) / Number(totalPotShares)) * 100).toFixed(2);
+                const newSharesPercentage = ((Number(newShares) / Number(totalPotShares)) * 100).toFixed(2);
+                
+                await ctx.deleteMessage(processingMsg.message_id);
+                
+                await ctx.replyWithMarkdownV2(
+                    `✅ *Deposit Successful\\!*\n\n` +
+                    `*Amount Deposited:* ${escapeMarkdownV2Amount(amount)} SOL\n` +
+                    `*New Shares Minted:* ${escapeMarkdownV2(newShares.toString())} \\(${escapeMarkdownV2(newSharesPercentage)}%\\)\n` +
+                    `*Your Total Shares:* ${escapeMarkdownV2(totalUserShares.toString())} \\(${escapeMarkdownV2(userPercentage)}%\\)\n` +
+                    `*Pot Total Shares:* ${escapeMarkdownV2(totalPotShares.toString())}\n\n` +
+                    `_Deposit recorded in pot ledger\\._`
+                );
+            } catch (e: any) {
+                await ctx.deleteMessage(processingMsg.message_id);
+                await ctx.reply(`❌ ${e.message}`);
             }
-        } 
+        } else {
+            await ctx.deleteMessage(processingMsg.message_id);
+            await ctx.reply(`❌ Deposit failed: ${message}`);
+        }
     } catch (error) {
         console.error(error);
-        await ctx.reply("⚠️ Something went wrong while sending SOL.");
-        ctx.scene.leave();
+        await ctx.reply("❌ Something went wrong while processing deposit.");
     }
 
-    await ctx.answerCbQuery("Done ✅");
     return ctx.scene.leave();
 })
 

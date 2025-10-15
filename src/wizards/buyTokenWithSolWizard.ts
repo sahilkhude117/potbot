@@ -37,7 +37,10 @@ export const buyTokenWithSolWizard = new Scenes.WizardScene<BotContext>(
                     parse_mode: "MarkdownV2",
                     link_preview_options: {
                         is_disabled: true
-                    }
+                    },
+                    ...Markup.inlineKeyboard([
+                        [Markup.button.callback("❌ Cancel", "wizard_cancel_buy")]
+                    ])
                 }
             );
 
@@ -49,13 +52,12 @@ export const buyTokenWithSolWizard = new Scenes.WizardScene<BotContext>(
         }
     },
 
-    // 2 -> validate token mint and ask for qty
     async (ctx) => {
         const state = ctx.wizard.state as BuyTokenWizardState;
         const text = ('text' in (ctx.message ?? {}) ? (ctx.message as { text: string }).text : undefined)?.trim();
 
         if (!text) {
-            return ctx.reply("❌ Please enter a valid token mint address.");
+            return ctx.reply("❌ Please enter a valid token mint address or press Cancel.");
         }
 
         try {
@@ -70,29 +72,78 @@ export const buyTokenWithSolWizard = new Scenes.WizardScene<BotContext>(
 
         state.tokenMint = text;
 
+        const user = await prismaClient.user.findUnique({
+            where: { id: state.userId }
+        });
+
+        if (!user) {
+            await ctx.reply("❌ User not found. Please register again.");
+            return ctx.scene.leave();
+        }
+
+        const userKeypair = Keypair.fromSecretKey(decodeSecretKey(user.privateKey));
+        const { balance, empty } = await getBalanceMessage(userKeypair.publicKey.toString());
+
+        if (empty || balance < 0.001) {
+            await ctx.replyWithMarkdownV2(
+                `❌ *Insufficient Balance*\n\n` +
+                `You have only ${escapeMarkdownV2Amount(balance)} SOL\\.\n\n` +
+                `You need at least 0\\.001 SOL for trading\\.\n\n` +
+                `_Please deposit SOL to your wallet first\\._`
+            );
+            return ctx.scene.leave();
+        }
+
+        state.balance = balance;
+
         await ctx.replyWithMarkdownV2(
             `✅ Token mint address saved\\!\n\n` +
             `📊 *How much SOL do you want to spend?*\n\n` +
-            `Enter the amount in SOL \\(e\\.g\\., 0\\.1\\)\n\n`
+            `💰 *Available:* ${escapeMarkdownV2Amount(balance)} SOL\n\n` +
+            `Enter the amount in SOL \\(e\\.g\\., 0\\.5\\)`,
+            Markup.inlineKeyboard([
+                [Markup.button.callback("❌ Cancel", "wizard_cancel_buy")]
+            ])
         );
 
         return ctx.wizard.next();
     },
 
-    // 3 -> get qty and show quote
     async (ctx) => {
         const state = ctx.wizard.state as BuyTokenWizardState;
         const text = ('text' in (ctx.message ?? {}) ? (ctx.message as { text: string }).text : undefined)?.trim();
         const quantity = parseFloat(text ?? '');
 
         if (isNaN(quantity) || quantity <= 0) {
-            return ctx.reply("❌ Please enter a valid number (e.g., 0.1)");
+            return ctx.reply("❌ Please enter a valid number (e.g., 0.5)");
         }
 
         const lamports = quantity * LAMPORTS_PER_SOL;
         if (lamports < 1) {
             return ctx.reply("❌ Amount too small — must be at least 0.000000001 SOL.");
         }
+
+        if (quantity > state.balance) {
+            await ctx.replyWithMarkdownV2(
+                `❌ *Insufficient Balance*\n\n` +
+                `You're trying to spend ${escapeMarkdownV2Amount(quantity)} SOL\\.\n` +
+                `You have only ${escapeMarkdownV2Amount(state.balance)} SOL\\.\n\n` +
+                `Please enter a smaller amount\\.`
+            );
+            return;
+        }
+
+        const minReserve = 0.005;
+        if (quantity > state.balance - minReserve) {
+            await ctx.replyWithMarkdownV2(
+                `❌ *Reserve SOL for Fees*\n\n` +
+                `Keep at least ${escapeMarkdownV2Amount(minReserve)} SOL for transaction fees\\.\n\n` +
+                `Maximum you can spend: ${escapeMarkdownV2Amount(state.balance - minReserve)} SOL`
+            );
+            return;
+        }
+
+        state.quantity = quantity;
 
         const user = await prismaClient.user.findFirst({
             where: { telegramUserId: ctx.from?.id.toString() }
@@ -102,18 +153,6 @@ export const buyTokenWithSolWizard = new Scenes.WizardScene<BotContext>(
             await ctx.reply("❌ User not found. Please register again.");
             return ctx.scene.leave();
         }
-
-        const userKeypair = Keypair.fromSecretKey(decodeSecretKey(user.privateKey));
-        const { empty, balance } = await getBalanceMessage(userKeypair.publicKey.toString());
-
-        if (empty || balance < quantity) {
-             await ctx.replyWithMarkdownV2(
-                `❌ *Insufficient balance*\n\nYou have only ${escapeMarkdownV2Amount(balance)} SOL available\\.\n\nPlease enter a valid amount\\.`
-            );
-            return;
-        }
-
-        state.quantity = quantity;
 
         const loadingMsg = await ctx.reply("⏳ Fetching quote...");
 
@@ -144,7 +183,7 @@ export const buyTokenWithSolWizard = new Scenes.WizardScene<BotContext>(
                 `*USD Value:* \\$${escapeMarkdownV2(parseFloat(usdValue).toFixed(4))}\n\n` +
                 `*Price Impact:* ${escapeMarkdownV2(priceImpact)}%\n` +
                 `*Slippage Tolerance:* ${escapeMarkdownV2((quoteResponse.slippageBps / 100).toString())}%\n` +
-                `🪙 *Token:* \`${escapeMarkdownV2(state.tokenMint.substring(0, 8))}\\.\\.\\.\`\n\n` +
+                `🪙 *Token:* \`${escapeMarkdownV2(state.tokenMint.substring(0, 12))}\\.\\.\\.\`\n\n` +
                 `Do you want to proceed with this swap?`,
                 Markup.inlineKeyboard([
                     [
@@ -223,9 +262,12 @@ buyTokenWithSolWizard.action("wizard_confirm_buy", async (ctx) => {
                 `*Spent:* ${escapeMarkdownV2Amount(inputAmount)} SOL\n` +
                 `*Received:* ≈ ${escapeMarkdownV2Amount(outputAmountFormatted)} tokens\n` +
                 `*Value:* \\$${escapeMarkdownV2(parseFloat(usdValue).toFixed(4))}\n\n` +
-                `*Token:* \`${escapeMarkdownV2(state.tokenMint.substring(0, 8))}\\.\\.\\.\`\n\n` +
-                `🔗 [View on Explorer](https://explorer.solana.com/tx/${escapeMarkdownV2(signature)})\n\n` +
+                `*Token:* \`${escapeMarkdownV2(state.tokenMint.substring(0, 12))}\\.\\.\\.\`\n\n` +
+                `🔗 [View on Solana Explorer](https://explorer.solana.com/tx/${escapeMarkdownV2(signature)})\n\n` +
                 `_Transaction confirmed\\!_`,
+                {
+                    parse_mode: "MarkdownV2",
+                }
             );
         } catch (error: any) {
             console.error("Swap error:", error);

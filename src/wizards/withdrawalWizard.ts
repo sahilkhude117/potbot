@@ -70,6 +70,8 @@ export const withdrawFromVaultWizard = new Scenes.WizardScene<BotContext>(
                 buttons.push(row);
             }
 
+            buttons.push([Markup.button.callback("❌ Cancel", "wizard_cancel_withdrawal")]);
+
             await ctx.reply(
                 "*Please select a pot to withdraw from:*",
                 {
@@ -90,13 +92,12 @@ export const withdrawFromVaultWizard = new Scenes.WizardScene<BotContext>(
     // 2 -> Waiting for pot selection 
     async (ctx) => {},
 
-    // 3: ask withdraw amount
     async (ctx) => {
         const state = ctx.wizard.state as WithdrawalWizardState;
         const text = ('text' in (ctx.message ?? {}) ? (ctx.message as { text: string }).text : undefined)?.trim();
 
         if (!text) {
-            return ctx.reply("❌ Please enter a valid amount.");
+            return ctx.reply("❌ Please enter a valid amount or press Cancel.");
         }
 
         let sharesToBurn: bigint;
@@ -107,21 +108,7 @@ export const withdrawFromVaultWizard = new Scenes.WizardScene<BotContext>(
                 return ctx.reply("❌ Please enter a valid percentage between 0 and 100 (e.g., 50%)");
             }
 
-            const member = await prismaClient.pot_Member.findUnique({
-                where: {
-                    userId_potId: {
-                        userId: state.userId,
-                        potId: state.potId
-                    }
-                }
-            });
-
-            if (!member) {
-                await ctx.reply("You are not a member of this pot.");
-                return ctx.scene.leave();
-            }
-
-            sharesToBurn = BigInt(Math.floor(Number(member.shares) * (percentage / 100)));
+            sharesToBurn = BigInt(Math.floor(Number(state.userShares) * (percentage / 100)));
         } else {
             const sharesInput = parseFloat(text);
             if (isNaN(sharesInput) || sharesInput <= 0) {
@@ -132,7 +119,17 @@ export const withdrawFromVaultWizard = new Scenes.WizardScene<BotContext>(
         }
 
         if (sharesToBurn === BigInt(0)) {
-            return ctx.reply("❌ Amount too small. Please enter a larger value.")
+            return ctx.reply("❌ Amount too small. Please enter a larger value.");
+        }
+
+        if (sharesToBurn > state.userShares) {
+            await ctx.replyWithMarkdownV2(
+                `❌ *Insufficient Shares*\n\n` +
+                `You're trying to withdraw ${escapeMarkdownV2(sharesToBurn.toString())} shares\\.\n` +
+                `You only have ${escapeMarkdownV2(state.userShares.toString())} shares\\.\n\n` +
+                `Please enter a smaller amount\\.`
+            );
+            return;
         }
 
         state.sharesToBurn = sharesToBurn;
@@ -204,6 +201,7 @@ withdrawFromVaultWizard.action(/wizard_select_withdraw_pot_(.+)/, async (ctx) =>
 
         state.potId = pot.id;
         state.potName = pot.name;
+        state.userShares = member.shares;
 
         const position = await getUserPosition(potId || pot.id, state.userId);
 
@@ -216,7 +214,10 @@ withdrawFromVaultWizard.action(/wizard_select_withdraw_pot_(.+)/, async (ctx) =>
             `You can enter:\n` +
             `• *Percentage* \\(e\\.g\\., \`50%\` for half\\)\n` +
             `• *Exact shares* \\(e\\.g\\., \`${escapeMarkdownV2(Math.floor(Number(position.shares) / 2).toString())}\`\\)\n\n` +
-            `⚠️ _You will receive a proportional share of ALL assets, not just one asset\\._`
+            `⚠️ _You will receive a proportional share of ALL assets, not just one asset\\._`,
+            Markup.inlineKeyboard([
+                [Markup.button.callback("❌ Cancel", "wizard_cancel_withdrawal")]
+            ])
         );
 
         await ctx.answerCbQuery();
@@ -233,7 +234,8 @@ withdrawFromVaultWizard.action("wizard_confirm_withdrawal", async (ctx) => {
     const { potId, userId, sharesToBurn } = state;
 
     try {
-        await ctx.reply("Processing withdrawal....");
+        await ctx.answerCbQuery("Processing withdrawal...");
+        const processingMsg = await ctx.reply("⏳ Processing withdrawal...");
 
         const withdrawal = await burnSharesAndWithdraw(potId, userId, sharesToBurn);
 
@@ -295,6 +297,8 @@ withdrawFromVaultWizard.action("wizard_confirm_withdrawal", async (ctx) => {
         const successCount: number = (transferResults as TransferResult[]).filter((r: TransferResult) => r.success).length;
         const failCount = transferResults.length - successCount;
 
+        await ctx.deleteMessage(processingMsg.message_id);
+
         await ctx.replyWithMarkdownV2(
             `✅ *Withdrawal Complete\\!*\n\n` +
             `*Shares Burned:* ${escapeMarkdownV2(withdrawal.sharesBurned.toString())}\n` +
@@ -310,7 +314,6 @@ withdrawFromVaultWizard.action("wizard_confirm_withdrawal", async (ctx) => {
         await ctx.reply(`❌ Withdrawal failed: ${error.message}`);
     }
 
-    await ctx.answerCbQuery("Done");
     return ctx.scene.leave();
 })
 
