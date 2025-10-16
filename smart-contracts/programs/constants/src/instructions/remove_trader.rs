@@ -1,0 +1,27 @@
+use anchor_lang::prelude::*;
+use crate::errors::PotError;
+use crate::states::Pot;
+
+pub fn handler(ctx: Context<RemoveTrader>, trader_to_remove: Pubkey) -> Result<()> {
+    let pot = &mut ctx.accounts.pot;
+
+    let initial_len = pot.traders.len();
+    pot.traders.retain(|&trader| trader != trader_to_remove);
+
+    require!(
+        pot.traders.len() < initial_len,
+        PotError::TraderNotFound
+    );
+
+    Ok(())
+}
+
+#[derive(Accounts)]
+pub struct RemoveTrader<'info> {
+    #[account(
+        mut,
+        has_one = admin @ PotError::Unauthorized
+    )]
+    pub pot: Account<'info, Pot>,
+    pub admin: Signer<'info>,
+}
