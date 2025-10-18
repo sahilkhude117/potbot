@@ -146,7 +146,7 @@ bot.start(async (ctx) => {
 })
 
 bot.command('deposit', (ctx) => ctx.scene.enter("deposit_sol_to_vault_wizard"))
-
+bot.command('withdraw', (ctx) => ctx.scene.enter("withdraw_from_vault_wizard"))
 
 async function handlePortfolio(ctx: any) {
   try {
