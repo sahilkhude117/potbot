@@ -33,4 +33,13 @@ pub mod solana_pot {
     pub fn redeem(ctx: Context<Redeem>, shares_to_burn: u64) -> Result<()> {
         instructions::redeem::handler(ctx, shares_to_burn)
     }
+
+    // authorize trader to perform a single swap.
+    pub fn set_swap_delegate(ctx: Context<SetSwapDelegate>, amount: u64) -> Result<()> {
+        instructions::set_swap_delegate::handler(ctx, amount)
+    }
+
+    pub fn revoke_swap_delegate(ctx: Context<RevokeSwapDelegate>) -> Result<()> {
+        instructions::revoke_swap_delegate::handler(ctx)
+    }
 }

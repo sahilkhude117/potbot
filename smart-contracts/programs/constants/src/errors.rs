@@ -18,4 +18,10 @@ pub enum PotError {
     CalculationOverflow,
     #[msg("You dont have enough shares to burn")]
     InsufficientShares,
+    #[msg("A delegate is already set for this pot.")]
+    DelegateAlreadySet,
+    #[msg("Amount must be greater than zero.")]
+    ZeroAmount,
+    #[msg("Signer is not the current delegate.")]
+    InvalidDelegate,
 }

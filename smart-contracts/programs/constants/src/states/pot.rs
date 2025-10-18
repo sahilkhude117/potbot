@@ -10,6 +10,8 @@ pub struct Pot {
     pub bump: u8,
     pub base_mint: Pubkey,
     pub total_shares: u64,
+    pub delegate: Pubkey,
+    pub delegated_amount: u64,
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Default)]
@@ -25,5 +27,7 @@ impl Pot {
         + 2 + 2 // fees
         + 1 // bump
         + 32 // base_mint
-        + 8; // total_shares
+        + 8 // total_shares
+        + 32 // delegate
+        + 8; // delagated_amount
 }
