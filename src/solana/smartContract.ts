@@ -511,7 +511,7 @@ export async function redeemFromPot(
  * @param traderPrivateKey - Trader's private key
  * @param adminPublicKey - Admin's public key (pot owner)
  * @param amount - Amount (in smallest units) the trader is authorized to spend
- * @param tokenMint - The mint address of the token to authorize spending
+ * @param tokenMint - The mint address of the token to authorize spending (the INPUT token being sold)
  * @returns Transaction signature
  */
 export async function setSwapDelegate(
@@ -529,12 +529,27 @@ export async function setSwapDelegate(
     // Derive pot PDA
     const [potPda] = getPotPDA(adminPubkey);
     
-    // Get pot's vault ATA for the specific token
+    // Get pot's vault ATA for the specific token being sold
+    // This is the token the trader will spend FROM (e.g., USDC vault when selling USDC)
     const potVaultAta = await getAssociatedTokenAddress(
       tokenMint,
       potPda,
       true // Allow PDA owner
     );
+
+    // Verify the vault exists and has sufficient balance
+    try {
+      const vaultAccount = await getAccount(connection, potVaultAta);
+      if (vaultAccount.amount < amount) {
+        throw new Error(`Insufficient balance in vault. Has ${vaultAccount.amount}, needs ${amount}`);
+      }
+      console.log(`✅ Vault verified: ${vaultAccount.amount} available, delegating ${amount}`);
+    } catch (e: any) {
+      if (e.message?.includes('Insufficient balance')) {
+        throw e;
+      }
+      throw new Error(`Token vault does not exist for mint ${tokenMint.toBase58()}`);
+    }
 
     // Create instruction data: discriminator + amount (u64)
     const instructionData = Buffer.concat([
@@ -563,6 +578,7 @@ export async function setSwapDelegate(
     );
 
     console.log(`✅ Swap delegate set! Signature: ${signature}`);
+    console.log(`✅ Token: ${tokenMint.toBase58()}`);
     console.log(`✅ Authorized amount: ${amount.toString()}`);
 
     return signature;
@@ -576,7 +592,7 @@ export async function setSwapDelegate(
  * Revokes swap delegate - removes trader's permission to spend from pot vault
  * @param traderPrivateKey - Trader's private key
  * @param adminPublicKey - Admin's public key (pot owner)
- * @param tokenMint - The mint address of the token to revoke authorization
+ * @param tokenMint - The mint address of the token to revoke authorization (the INPUT token that was sold)
  * @returns Transaction signature
  */
 export async function revokeSwapDelegate(
@@ -593,7 +609,8 @@ export async function revokeSwapDelegate(
     // Derive pot PDA
     const [potPda] = getPotPDA(adminPubkey);
     
-    // Get pot's vault ATA for the specific token
+    // Get pot's vault ATA for the specific token that was delegated
+    // This must be the SAME vault that was passed to setSwapDelegate
     const potVaultAta = await getAssociatedTokenAddress(
       tokenMint,
       potPda,
@@ -624,6 +641,7 @@ export async function revokeSwapDelegate(
     );
 
     console.log(`✅ Swap delegate revoked! Signature: ${signature}`);
+    console.log(`✅ Token: ${tokenMint.toBase58()}`);
 
     return signature;
   } catch (error) {

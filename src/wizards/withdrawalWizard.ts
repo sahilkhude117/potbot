@@ -230,11 +230,14 @@ withdrawFromVaultWizard.action("wizard_confirm_withdrawal", async (ctx) => {
 
     try {
         await ctx.answerCbQuery("Processing withdrawal...");
-        const processingMsg = await ctx.reply("⏳ Processing on-chain withdrawal...");
+        const processingMsg = await ctx.reply("⏳ Checking vault liquidity...");
 
         const pot = await prismaClient.pot.findUnique({
             where: { id: potId },
-            include: { admin: true }
+            include: { 
+                admin: true,
+                assets: true
+            }
         });
         
         const user = await prismaClient.user.findUnique({
@@ -247,6 +250,64 @@ withdrawFromVaultWizard.action("wizard_confirm_withdrawal", async (ctx) => {
             return ctx.scene.leave();
         }
 
+        // Check liquid SOL balance on-chain before proceeding
+        const { Connection } = await import("@solana/web3.js");
+        const { PublicKey } = await import("@solana/web3.js");
+        const { getAssociatedTokenAddress, getAccount } = await import("@solana/spl-token");
+        const { getPotPDA } = await import("../solana/smartContract");
+        
+        const connection = new Connection(process.env.RPC_URL!, "confirmed");
+        const adminPubkey = new PublicKey(pot.admin.publicKey);
+        const [potPda] = getPotPDA(adminPubkey);
+        
+        // Get base mint from pot (cashOutMint or default to SOL)
+        const baseMint = new PublicKey(pot.cashOutMint);
+        const potVaultAta = await getAssociatedTokenAddress(
+            baseMint,
+            potPda,
+            true
+        );
+
+        let vaultBalance = BigInt(0);
+        try {
+            const vaultAccount = await getAccount(connection, potVaultAta);
+            vaultBalance = vaultAccount.amount;
+        } catch (e) {
+            console.error("Vault account not found:", e);
+        }
+
+        // Calculate required amount for withdrawal
+        const preview = await getWithdrawalPreview(potId, userId, sharesToBurn);
+        const requiredAmount = preview.assetToReturn.amount;
+
+        if (vaultBalance < requiredAmount) {
+            await ctx.deleteMessage(processingMsg.message_id);
+            
+            const decimals = await getTokenDecimalsWithCache(baseMint.toBase58());
+            const vaultBalanceReadable = Number(vaultBalance) / (10 ** decimals);
+            const requiredReadable = Number(requiredAmount) / (10 ** decimals);
+            
+            const symbol = baseMint.toBase58() === "So11111111111111111111111111111111111111112"
+                ? "SOL"
+                : baseMint.toBase58().slice(0, 4) + "..." + baseMint.toBase58().slice(-4);
+
+            await ctx.replyWithMarkdownV2(
+                `❌ *Insufficient Liquid Balance*\n\n` +
+                `The pot vault has insufficient ${escapeMarkdownV2(symbol)} for this withdrawal\\.\n\n` +
+                `*Required:* ${escapeMarkdownV2Amount(requiredReadable)} ${escapeMarkdownV2(symbol)}\n` +
+                `*Available:* ${escapeMarkdownV2Amount(vaultBalanceReadable)} ${escapeMarkdownV2(symbol)}\n\n` +
+                `💡 _Traders must sell other assets to increase the ${escapeMarkdownV2(symbol)} balance before you can withdraw\\._\n\n` +
+                `🔄 _Try withdrawing a smaller percentage or ask traders to rebalance the portfolio\\._`,
+                {
+                    ...CHECK_BALANCE_KEYBOARD
+                }
+            );
+            return ctx.scene.leave();
+        }
+
+        // Proceed with withdrawal if sufficient balance
+        await ctx.editMessageText("⏳ Processing on-chain withdrawal...");
+
         // Import smart contract functions
         const { redeemFromPot } = await import("../solana/smartContract");
 
@@ -255,7 +316,8 @@ withdrawFromVaultWizard.action("wizard_confirm_withdrawal", async (ctx) => {
             const { signature, amountReceived } = await redeemFromPot(
                 user.privateKey,
                 pot.admin.publicKey,
-                sharesToBurn
+                sharesToBurn,
+                baseMint
             );
 
             // After successful on-chain redemption, update database
@@ -282,9 +344,17 @@ withdrawFromVaultWizard.action("wizard_confirm_withdrawal", async (ctx) => {
         } catch (e: any) {
             console.error("Withdrawal error:", e);
             await ctx.deleteMessage(processingMsg.message_id);
+            
+            let errorMessage = e.message || 'Unknown error';
+            
+            // Check if error is due to insufficient vault balance
+            if (errorMessage.includes('insufficient') || errorMessage.includes('balance')) {
+                errorMessage = "Insufficient liquid balance in vault. Traders need to sell other assets to increase base asset balance.";
+            }
+            
             await ctx.replyWithMarkdownV2(
                 `❌ *Withdrawal Failed*\n\n` +
-                `⚠️ ${escapeMarkdownV2(e.message || 'Unknown error')}\n\n` +
+                `⚠️ ${escapeMarkdownV2(errorMessage)}\n\n` +
                 `Please try again or contact support\\.`,
                 {
                     ...CHECK_BALANCE_KEYBOARD
