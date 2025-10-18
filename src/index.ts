@@ -3,7 +3,6 @@ import { prismaClient } from "./db/prisma";
 import { ADD_POTBOT_TO_GROUP, CREATE_INVITE_DONE_KEYBOARD, CREATE_NEW_POT, DEFAULT_GROUP_KEYBOARD, DEFAULT_KEYBOARD, SOLANA_POT_BOT, SOLANA_POT_BOT_WITH_START_KEYBOARD } from "./keyboards/keyboards";
 import { Connection, Keypair, LAMPORTS_PER_SOL, VersionedTransaction}  from "@solana/web3.js";
 import { getBalanceMessage } from "./solana/getBalance";
-import { createMockVault } from "./solana/createVault";
 import { escapeMarkdownV2, escapeMarkdownV2Amount } from "./lib/utils";
 import { depositSolToVaultWizard } from "./wizards/depositWizard";
 import { withdrawFromVaultWizard } from "./wizards/withdrawalWizard";
@@ -18,6 +17,7 @@ import { sellTokenForSolWizard } from "./wizards/sellTokenForSolWizard";
 import { sellTokenForSolWizardGroup } from "./wizards/sellTokenForSolGroupWizard";
 import { computePotValueInUSD } from "./solana/computePotValueInUSD";
 import { getTokenDecimalsWithCache } from "./solana/getTokenDecimals";
+import { initializePotOnChain, addTraderOnChain, removeTraderOnChain, getPotPDA } from "./solana/smartContract";
 
 const bot = new Telegraf<BotContext>(process.env.TELEGRAM_BOT_TOKEN!)
 
@@ -570,24 +570,33 @@ bot.action("create_pot", async (ctx) => {
   });
 
   if (existingUser) {
-    const newVault = createMockVault();
+    try {
+      // Initialize pot on the smart contract
+      const { signature, potPDA } = await initializePotOnChain(
+        existingUser.privateKey,
+        0, // performanceFeeBps 
+        0  // redemptionFeeBps 
+      );
 
-    const pot = await prismaClient.pot.create({
-      data: {
-          name: "",
-          adminId: existingUser.id,
-          telegramGroupId: `telegramGroupId_${ctx.from.id}_${newVault.publicKey}`,
-          vaultAddress: JSON.stringify(newVault),
-          isGroupAdded: false
-      }
-    })
+      // Create pot in database with PDA as vault address
+      const pot = await prismaClient.pot.create({
+        data: {
+            name: "",
+            adminId: existingUser.id,
+            telegramGroupId: `telegramGroupId_${ctx.from.id}_${Date.now()}`, // Use timestamp for uniqueness
+            vaultAddress: potPDA.toBase58(), // Store the on-chain PDA address
+            isGroupAdded: false
+        }
+      })
 
-    await ctx.replyWithMarkdownV2(
-    `*Created Pot Successfully*\\.
+      await ctx.replyWithMarkdownV2(
+      `*Created Pot Successfully*\\.
 
 *Pot Id*: ${escapeMarkdownV2(pot.id)}
 
-*Vault Id*: ${escapeMarkdownV2(pot.vaultAddress)}
+*On\\-Chain Vault Address \\(PDA\\)*: \`${escapeMarkdownV2(potPDA.toBase58())}\`
+
+*Transaction Signature*: \`${escapeMarkdownV2(signature)}\`
 
 *Please follow these steps carefully:*
 
@@ -596,9 +605,13 @@ bot.action("create_pot", async (ctx) => {
 *Step 2:* After creating the group, *click the button below* to join me in the group\\.
 
 *Note:* You *must first create the group* before clicking the button below\\.`, {
-      ...ADD_POTBOT_TO_GROUP
+        ...ADD_POTBOT_TO_GROUP
+      }
+    );
+    } catch (error) {
+      console.error("Error creating pot:", error);
+      await ctx.reply("❌ Failed to create pot on blockchain. Please try again later.");
     }
-  );
   }
 })
 
@@ -1023,33 +1036,58 @@ bot.command("settrader", async (ctx) => {
       );
     }
 
-    await prismaClient.pot_Member.update({
-      where: {
-        userId_potId: {
-          userId: targetUser.id,
-          potId: pot.id
-        }
-      },
-      data: {
-        role: "TRADER"
-      }
-    });
-
-    await ctx.reply(
-      `✅ ${targetUsername} is now a trader in ${pot.name}!\n\n` +
-      `They can now execute trades on behalf of the pot.`
-    );
-
     try {
-      await ctx.telegram.sendMessage(
-        parseInt(targetUserId),
-        `🎉 Congratulations!\n\n` +
-        `You've been granted trader permissions in "${pot.name}".\n\n` +
-        `You can now execute trades for the pot.`
+      // Get admin user to access their private key
+      const adminUser = await prismaClient.user.findFirst({
+        where: { id: pot.adminId }
+      });
+
+      if (!adminUser) {
+        return ctx.reply("❌ Admin user not found.");
+      }
+
+      // Add trader on the smart contract first
+      const signature = await addTraderOnChain(
+        adminUser.privateKey,
+        targetUser.publicKey
       );
+
+      // If on-chain transaction succeeds, update database
+      await prismaClient.pot_Member.update({
+        where: {
+          userId_potId: {
+            userId: targetUser.id,
+            potId: pot.id
+          }
+        },
+        data: {
+          role: "TRADER"
+        }
+      });
+
+      await ctx.reply(
+        `✅ ${targetUsername} is now a trader in ${pot.name}!\n\n` +
+        `They can now execute trades on behalf of the pot.\n\n` +
+        `🔗 Transaction: ${signature}`
+      );
+
+      try {
+        await ctx.telegram.sendMessage(
+          parseInt(targetUserId),
+          `🎉 Congratulations!\n\n` +
+          `You've been granted trader permissions in "${pot.name}".\n\n` +
+          `You can now execute trades for the pot.\n\n` +
+          `Transaction: ${signature}`
+        );
+      } catch (error) {
+        console.log(`Could not send DM to user ${targetUserId}`);
+      }
     } catch (error) {
-      // User hasn't started bot in DM, that's okay
-      console.log(`Could not send DM to user ${targetUserId}`);
+      console.error("Error adding trader on-chain:", error);
+      return ctx.reply(
+        "❌ Failed to add trader on blockchain. Please try again later.\n\n" +
+        "The database has not been updated."
+      );
     }
 
   } catch (error) {
@@ -1210,32 +1248,58 @@ bot.command("removetrader", async (ctx) => {
       return ctx.reply(`⚠️ ${targetUsername} is not a trader.`);
     }
 
-    await prismaClient.pot_Member.update({
-      where: {
-        userId_potId: {
-          userId: targetUser.id,
-          potId: pot.id
-        }
-      },
-      data: {
-        role: "MEMBER"
-      }
-    });
-
-    await ctx.reply(
-      `❌ ${targetUsername} is no longer a trader in ${pot.name}.\n\n` +
-      `They have been changed to a regular member.`
-    );
-
     try {
-      await ctx.telegram.sendMessage(
-        parseInt(targetUserId),
-        `📢 Notice\n\n` +
-        `Your trader permissions in "${pot.name}" have been revoked.\n\n` +
-        `You are now a regular member.`
+      // Get admin user to access their private key
+      const adminUser = await prismaClient.user.findFirst({
+        where: { id: pot.adminId }
+      });
+
+      if (!adminUser) {
+        return ctx.reply("❌ Admin user not found.");
+      }
+
+      // Remove trader from the smart contract first
+      const signature = await removeTraderOnChain(
+        adminUser.privateKey,
+        targetUser.publicKey
       );
+
+      // If on-chain transaction succeeds, update database
+      await prismaClient.pot_Member.update({
+        where: {
+          userId_potId: {
+            userId: targetUser.id,
+            potId: pot.id
+          }
+        },
+        data: {
+          role: "MEMBER"
+        }
+      });
+
+      await ctx.reply(
+        `❌ ${targetUsername} is no longer a trader in ${pot.name}.\n\n` +
+        `They have been changed to a regular member.\n\n` +
+        `🔗 Transaction: ${signature}`
+      );
+
+      try {
+        await ctx.telegram.sendMessage(
+          parseInt(targetUserId),
+          `📢 Notice\n\n` +
+          `Your trader permissions in "${pot.name}" have been revoked.\n\n` +
+          `You are now a regular member.\n\n` +
+          `Transaction: ${signature}`
+        );
+      } catch (error) {
+        console.log(`Could not send DM to user ${targetUserId}`);
+      }
     } catch (error) {
-      console.log(`Could not send DM to user ${targetUserId}`);
+      console.error("Error removing trader on-chain:", error);
+      return ctx.reply(
+        "❌ Failed to remove trader on blockchain. Please try again later.\n\n" +
+        "The database has not been updated."
+      );
     }
 
   } catch (error) {

@@ -1,0 +1,43 @@
+{
+    "version":"0.1.0",
+    "name":"solana_pot",
+    "constants":
+        [{
+            "name":"POT_SEED",
+            "type":"bytes",
+            "value":"[112, 111, 116]"}],
+            "instructions":
+                [{
+                    "name":"initializePot",
+                    "accounts":[{
+                        "name":"pot",
+                        "isMut":true,
+                        "isSigner":false
+                    },{
+                        "name":"admin",
+                        "isMut":true,
+                        "isSigner":true
+                    },{
+                        "name":"systemProgram",
+                        "isMut":false,
+                        "isSigner":false
+                }],
+            "args":
+                [{
+                    "name":"fees",
+                    "type":{
+                        "defined":"PotFees"
+                    }}]},
+                    {
+                        "name":"addTrader",
+                        "accounts":
+                            [{
+                                "name":"pot",
+                                "isMut":true,
+                                "isSigner":false
+                            },{
+                                "name":"admin",
+                                "isMut":false,
+                                "isSigner":true
+                            }],
+                        "args":[{"name":"traderToAdd","type":"publicKey"}]},{"name":"removeTrader","accounts":[{"name":"pot","isMut":true,"isSigner":false},{"name":"admin","isMut":false,"isSigner":true}],"args":[{"name":"traderToRemove","type":"publicKey"}]}],"accounts":[{"name":"Pot","type":{"kind":"struct","fields":[{"name":"admin","type":"publicKey"},{"name":"traders","type":{"vec":"publicKey"}},{"name":"fees","type":{"defined":"PotFees"}},{"name":"bump","type":"u8"}]}}],"types":[{"name":"PotFees","type":{"kind":"struct","fields":[{"name":"performanceFeeBps","type":"u16"},{"name":"redemptionFeeBps","type":"u16"}]}}],"errors":[{"code":6000,"name":"Unauthorized","msg":"You are not authorized to perform this action."},{"code":6001,"name":"MaxTradersReached","msg":"The maximum number of traders has been reached."},{"code":6002,"name":"TraderAlreadyExists","msg":"This trader is already on the list."},{"code":6003,"name":"TraderNotFound","msg":"Trader not found in the list."}]}
