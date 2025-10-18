@@ -1,12 +1,9 @@
 import { Markup, Scenes } from "telegraf";
 import { prismaClient } from "../db/prisma";
-import { computePotValueInUSD } from "../solana/computePotValueInUSD";
 import { getTokenDecimalsWithCache } from "../solana/getTokenDecimals";
 import type { BotContext, WithdrawalWizardState } from "../lib/types";
-import { decodeSecretKey, escapeMarkdownV2, escapeMarkdownV2Amount } from "../lib/utils";
-import { Keypair } from "@solana/web3.js";
+import { escapeMarkdownV2, escapeMarkdownV2Amount } from "../lib/utils";
 import { getUserPosition } from "../solana/getUserPosition";
-import { transferAssets } from "../solana/transferAssets";
 import { CHECK_BALANCE_KEYBOARD } from "../keyboards/keyboards";
 
 

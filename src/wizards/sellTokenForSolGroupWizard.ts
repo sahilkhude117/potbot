@@ -1,7 +1,7 @@
 import { Markup, Scenes } from "telegraf";
 import type { BotContext, SellTokenGroupWizardState } from "../lib/types";
 import { prismaClient } from "../db/prisma";
-import { Connection, Keypair, LAMPORTS_PER_SOL, VersionedTransaction } from "@solana/web3.js";
+import { Connection, Keypair, LAMPORTS_PER_SOL, VersionedTransaction, PublicKey } from "@solana/web3.js";
 import { SOL_MINT } from "../lib/statits";
 import { decodeSecretKey, escapeMarkdownV2, escapeMarkdownV2Amount } from "../lib/utils";
 import { getUserTokenAccounts, getTokenMetadata } from "../solana/getTokenAccounts";
@@ -126,21 +126,28 @@ export const sellTokenForSolWizardGroup = new Scenes.WizardScene<BotContext>(
             state.potId = pot.id;
             state.isAdmin = isAdmin;
 
-            const vault = JSON.parse(pot.vaultAddress);
-            const vaultPrivateKey = vault.secretKey;
-            state.vaultPrivateKey = vaultPrivateKey;
-
-            const vaultKeypair = Keypair.fromSecretKey(decodeSecretKey(vaultPrivateKey));
+            // Get pot vault PDA address to check token accounts
+            const { getPotPDA } = await import("../solana/smartContract");
+            
+            const adminPubkey = new PublicKey(pot.admin.publicKey);
+            const [potPda] = getPotPDA(adminPubkey);
 
             const loadingMsg = await ctx.reply("⏳ Fetching vault tokens...");
 
-            const tokenAccounts = await getUserTokenAccounts(connection, vaultKeypair.publicKey.toString());
+            // Get token accounts owned by pot PDA
+            const tokenAccounts = await getUserTokenAccounts(connection, potPda.toString());
 
             await ctx.deleteMessage(loadingMsg.message_id);
 
-            if (tokenAccounts.length === 0) {
+            // Filter out SOL (native mint) - can't trade SOL for SOL
+            const tradableTokens = tokenAccounts.filter(token => token.mintAddress !== SOL_MINT);
+
+            if (tradableTokens.length === 0) {
                 await ctx.reply(
                     "❌ Vault has no tokens to sell.\n\n" +
+                    (tokenAccounts.length > 0 
+                        ? "Only SOL is available, which cannot be sold for SOL.\n\n"
+                        : "") +
                     "Buy some tokens first using the Buy option."
                 );
                 releaseTradeLock(pot.id, user.id);
@@ -148,7 +155,7 @@ export const sellTokenForSolWizardGroup = new Scenes.WizardScene<BotContext>(
             }
 
             const buttons: any[][] = [];
-            const fetchMetadataPromises = tokenAccounts.map(async (token) => {
+            const fetchMetadataPromises = tradableTokens.map(async (token) => {
                 const metadata = await getTokenMetadata(token.mintAddress);
                 return { token, metadata };
             });
@@ -258,7 +265,17 @@ export const sellTokenForSolWizardGroup = new Scenes.WizardScene<BotContext>(
                 return ctx.scene.leave();
             }
 
-            const vaultKeypair = Keypair.fromSecretKey(decodeSecretKey(state.vaultPrivateKey));
+            // Get user (trader) keypair for quote
+            const user = await prismaClient.user.findUnique({
+                where: { id: state.userId }
+            });
+
+            if (!user) {
+                await ctx.reply("❌ User not found.");
+                return ctx.scene.leave();
+            }
+
+            const traderKeypair = Keypair.fromSecretKey(decodeSecretKey(user.privateKey));
 
             const amountInSmallestUnit = Math.floor(quantity * Math.pow(10, state.tokenDecimals));
 
@@ -266,7 +283,7 @@ export const sellTokenForSolWizardGroup = new Scenes.WizardScene<BotContext>(
                 state.tokenMint,
                 SOL_MINT,
                 amountInSmallestUnit,
-                vaultKeypair.publicKey.toString()
+                traderKeypair.publicKey.toString()
             );
 
             state.quoteData = quoteResponse;
@@ -389,7 +406,7 @@ sellTokenForSolWizardGroup.action("wizard_confirm_group_sell", async (ctx) => {
 
     try {
         await ctx.answerCbQuery("Processing trade...");
-        const processingMsg = await ctx.reply("⏳ Executing swap on Jupiter...");
+        const processingMsg = await ctx.reply("⏳ Setting up trade authorization...");
 
         const pot = await prismaClient.pot.findUnique({
             where: { id: state.potId },
@@ -398,7 +415,8 @@ sellTokenForSolWizardGroup.action("wizard_confirm_group_sell", async (ctx) => {
                     where: {
                         userId: state.userId
                     }
-                }
+                },
+                admin: true
             }
         });
 
@@ -413,32 +431,67 @@ sellTokenForSolWizardGroup.action("wizard_confirm_group_sell", async (ctx) => {
             return ctx.scene.leave();
         }
 
-        const vaultKeypair = Keypair.fromSecretKey(decodeSecretKey(state.vaultPrivateKey));
-
-        const swapTransaction = await executeSwap(
-            state.quoteData,
-            vaultKeypair.publicKey.toString()
-        );
-
-        const tx = VersionedTransaction.deserialize(
-            Uint8Array.from(atob(swapTransaction), c => c.charCodeAt(0))
-        );
-        tx.sign([vaultKeypair]);
-
-        const signature = await connection.sendTransaction(tx);
-
-        await prismaClient.trade.create({
-            data: {
-                potId: state.potId,
-                traderId: member?.id || pot.adminId,
-                inMint: state.tokenMint,
-                inAmount: BigInt(state.quoteData.inAmount),
-                outMint: SOL_MINT,
-                outAmount: BigInt(state.quoteData.outAmount),
-                txSignature: signature,
-                status: "COMPLETED"
-            }
+        // Get user (trader) details
+        const user = await prismaClient.user.findUnique({
+            where: { id: state.userId }
         });
+
+        if (!user) {
+            throw new Error("User not found");
+        }
+
+        const traderKeypair = Keypair.fromSecretKey(decodeSecretKey(user.privateKey));
+        const inputMint = new PublicKey(state.tokenMint);
+        const delegateAmount = BigInt(state.quoteData.inAmount);
+
+        // Import smart contract functions
+        const { setSwapDelegate, revokeSwapDelegate } = await import("../solana/smartContract");
+
+        let delegateSet = false;
+        let swapSignature: string | null = null;
+
+        try {
+            // Step 1: Set swap delegate
+            await ctx.editMessageText("⏳ Step 1/3: Setting swap authorization...");
+            await setSwapDelegate(
+                user.privateKey,
+                pot.admin.publicKey,
+                delegateAmount,
+                inputMint
+            );
+            delegateSet = true;
+            console.log("✅ Delegate set successfully");
+
+            // Step 2: Execute Jupiter swap (signed by trader)
+            await ctx.editMessageText("⏳ Step 2/3: Executing swap on Jupiter...");
+            const swapTransaction = await executeSwap(
+                state.quoteData,
+                traderKeypair.publicKey.toString()
+            );
+
+            const tx = VersionedTransaction.deserialize(
+                Uint8Array.from(atob(swapTransaction), c => c.charCodeAt(0))
+            );
+            
+            // Sign with TRADER's keypair (not vault)
+            tx.sign([traderKeypair]);
+
+            swapSignature = await connection.sendTransaction(tx);
+            console.log(`✅ Swap executed: ${swapSignature}`);
+
+            // Update database with trade record
+            await prismaClient.trade.create({
+                data: {
+                    potId: state.potId,
+                    traderId: member?.id || pot.adminId,
+                    inMint: state.tokenMint,
+                    inAmount: BigInt(state.quoteData.inAmount),
+                    outMint: SOL_MINT,
+                    outAmount: BigInt(state.quoteData.outAmount),
+                    txSignature: swapSignature,
+                    status: "COMPLETED"
+                }
+            });
 
         await prismaClient.asset.upsert({
             where: {
@@ -473,25 +526,53 @@ sellTokenForSolWizardGroup.action("wizard_confirm_group_sell", async (ctx) => {
             }
         });
 
-        await ctx.deleteMessage(processingMsg.message_id);
+            // Display success message
+            await ctx.deleteMessage(processingMsg.message_id);
 
-        const inputAmount = Number(state.quoteData.inAmount) / Math.pow(10, state.tokenDecimals);
-        const outputAmount = Number(state.quoteData.outAmount) / LAMPORTS_PER_SOL;
-        const usdValue = state.quoteData.swapUsdValue || "0";
+            const inputAmount = Number(state.quoteData.inAmount) / Math.pow(10, state.tokenDecimals);
+            const outputAmount = Number(state.quoteData.outAmount) / LAMPORTS_PER_SOL;
+            const usdValue = state.quoteData.swapUsdValue || "0";
 
-        await ctx.replyWithMarkdownV2(
-            `✅ *Trade Executed Successfully\\!*\n\n` +
-            `*Vault Sold:* ${escapeMarkdownV2Amount(inputAmount)} ${escapeMarkdownV2(state.tokenSymbol)}\n` +
-            `*Vault Received:* ≈ ${escapeMarkdownV2Amount(outputAmount)} SOL\n` +
-            `*Value:* \\$${escapeMarkdownV2(parseFloat(usdValue).toFixed(4))}\n\n` +
-            `🔗 [View on Solana Explorer](https://explorer.solana.com/tx/${escapeMarkdownV2(signature)})\n\n` +
-            `_Trade recorded in pot ledger\\._`,
-            {
-                parse_mode: "MarkdownV2",
+            await ctx.replyWithMarkdownV2(
+                `✅ *Trade Executed Successfully\\!*\n\n` +
+                `*Vault Sold:* ${escapeMarkdownV2Amount(inputAmount)} ${escapeMarkdownV2(state.tokenSymbol)}\n` +
+                `*Vault Received:* ≈ ${escapeMarkdownV2Amount(outputAmount)} SOL\n` +
+                `*Value:* \\$${escapeMarkdownV2(parseFloat(usdValue).toFixed(4))}\n\n` +
+                `🔗 [View on Solana Explorer](https://explorer.solana.com/tx/${escapeMarkdownV2(swapSignature)})\n\n` +
+                `_Trade recorded in pot ledger\\. Permissions revoked\\._`,
+                {
+                    parse_mode: "MarkdownV2",
+                }
+            );
+
+        } catch (swapError: any) {
+            console.error("Swap execution error:", swapError);
+            throw swapError;
+        } finally {
+            // Step 3: Always revoke delegate (CRITICAL SECURITY STEP)
+            if (delegateSet) {
+                try {
+                    await ctx.editMessageText("⏳ Step 3/3: Revoking swap authorization...");
+                    await revokeSwapDelegate(
+                        user.privateKey,
+                        pot.admin.publicKey,
+                        inputMint
+                    );
+                    console.log("✅ Delegate revoked successfully");
+                } catch (revokeError) {
+                    console.error("🚨 CRITICAL: Failed to revoke delegate:", revokeError);
+                    await ctx.reply(
+                        "⚠️ *CRITICAL WARNING*\n\n" +
+                        "Trade completed but could not revoke permissions\\.\n" +
+                        "Please contact support immediately\\.",
+                        { parse_mode: "MarkdownV2" }
+                    );
+                }
             }
-        );
 
-        releaseTradeLock(state.potId, state.userId);
+            // Release off-chain lock
+            releaseTradeLock(state.potId, state.userId);
+        }
     } catch (error: any) {
         console.error("Group swap error:", error);
         

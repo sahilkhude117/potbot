@@ -56,8 +56,10 @@ const INSTRUCTION_DISCRIMINATORS = {
   initializePot: Buffer.from([142, 71, 252, 186, 244, 59, 203, 118]), // initialize_pot
   addTrader: Buffer.from([242, 5, 40, 133, 11, 55, 94, 217]),         // add_trader
   removeTrader: Buffer.from([60, 148, 215, 48, 228, 172, 5, 194]),    // remove_trader
-  deposit: Buffer.from([242, 35, 198, 137, 82, 225, 242, 182]),       // deposit (was already correct!)
-  redeem: Buffer.from([184, 12, 86, 149, 70, 196, 97, 225]),          // redeem (was already correct!)
+  deposit: Buffer.from([242, 35, 198, 137, 82, 225, 242, 182]),       // deposit
+  redeem: Buffer.from([184, 12, 86, 149, 70, 196, 97, 225]),          // redeem
+  setSwapDelegate: Buffer.from([219, 92, 4, 116, 16, 194, 110, 204]), // set_swap_delegate
+  revokeSwapDelegate: Buffer.from([107, 167, 229, 170, 140, 159, 30, 223]), // revoke_swap_delegate
 };
 
 /**
@@ -501,6 +503,132 @@ export async function redeemFromPot(
   } catch (error) {
     console.error("❌ Error redeeming from pot:", error);
     throw new Error(`Failed to redeem from pot: ${error}`);
+  }
+}
+
+/**
+ * Sets swap delegate - gives trader temporary permission to spend from pot vault
+ * @param traderPrivateKey - Trader's private key
+ * @param adminPublicKey - Admin's public key (pot owner)
+ * @param amount - Amount (in smallest units) the trader is authorized to spend
+ * @param tokenMint - The mint address of the token to authorize spending
+ * @returns Transaction signature
+ */
+export async function setSwapDelegate(
+  traderPrivateKey: string,
+  adminPublicKey: string,
+  amount: bigint,
+  tokenMint: PublicKey
+): Promise<string> {
+  try {
+    const secretKey = decodeSecretKey(traderPrivateKey);
+    const traderKeypair = Keypair.fromSecretKey(secretKey);
+    const connection = getConnection();
+    const adminPubkey = new PublicKey(adminPublicKey);
+    
+    // Derive pot PDA
+    const [potPda] = getPotPDA(adminPubkey);
+    
+    // Get pot's vault ATA for the specific token
+    const potVaultAta = await getAssociatedTokenAddress(
+      tokenMint,
+      potPda,
+      true // Allow PDA owner
+    );
+
+    // Create instruction data: discriminator + amount (u64)
+    const instructionData = Buffer.concat([
+      INSTRUCTION_DISCRIMINATORS.setSwapDelegate,
+      serializeU64(amount)
+    ]);
+
+    const setDelegateInstruction = new TransactionInstruction({
+      keys: [
+        { pubkey: traderKeypair.publicKey, isSigner: true, isWritable: true },
+        { pubkey: potPda, isSigner: false, isWritable: true },
+        { pubkey: adminPubkey, isSigner: false, isWritable: false },
+        { pubkey: potVaultAta, isSigner: false, isWritable: true },
+        { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+      ],
+      programId: PROGRAM_ID,
+      data: instructionData,
+    });
+
+    const transaction = new Transaction().add(setDelegateInstruction);
+    const signature = await sendAndConfirmTransaction(
+      connection,
+      transaction,
+      [traderKeypair],
+      { commitment: 'confirmed' }
+    );
+
+    console.log(`✅ Swap delegate set! Signature: ${signature}`);
+    console.log(`✅ Authorized amount: ${amount.toString()}`);
+
+    return signature;
+  } catch (error) {
+    console.error("❌ Error setting swap delegate:", error);
+    throw new Error(`Failed to set swap delegate: ${error}`);
+  }
+}
+
+/**
+ * Revokes swap delegate - removes trader's permission to spend from pot vault
+ * @param traderPrivateKey - Trader's private key
+ * @param adminPublicKey - Admin's public key (pot owner)
+ * @param tokenMint - The mint address of the token to revoke authorization
+ * @returns Transaction signature
+ */
+export async function revokeSwapDelegate(
+  traderPrivateKey: string,
+  adminPublicKey: string,
+  tokenMint: PublicKey
+): Promise<string> {
+  try {
+    const secretKey = decodeSecretKey(traderPrivateKey);
+    const traderKeypair = Keypair.fromSecretKey(secretKey);
+    const connection = getConnection();
+    const adminPubkey = new PublicKey(adminPublicKey);
+    
+    // Derive pot PDA
+    const [potPda] = getPotPDA(adminPubkey);
+    
+    // Get pot's vault ATA for the specific token
+    const potVaultAta = await getAssociatedTokenAddress(
+      tokenMint,
+      potPda,
+      true // Allow PDA owner
+    );
+
+    // Create instruction data: just the discriminator (no args)
+    const instructionData = INSTRUCTION_DISCRIMINATORS.revokeSwapDelegate;
+
+    const revokeDelegateInstruction = new TransactionInstruction({
+      keys: [
+        { pubkey: traderKeypair.publicKey, isSigner: true, isWritable: false },
+        { pubkey: potPda, isSigner: false, isWritable: true },
+        { pubkey: adminPubkey, isSigner: false, isWritable: false },
+        { pubkey: potVaultAta, isSigner: false, isWritable: true },
+        { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+      ],
+      programId: PROGRAM_ID,
+      data: instructionData,
+    });
+
+    const transaction = new Transaction().add(revokeDelegateInstruction);
+    const signature = await sendAndConfirmTransaction(
+      connection,
+      transaction,
+      [traderKeypair],
+      { commitment: 'confirmed' }
+    );
+
+    console.log(`✅ Swap delegate revoked! Signature: ${signature}`);
+
+    return signature;
+  } catch (error) {
+    console.error("❌ Error revoking swap delegate:", error);
+    throw new Error(`Failed to revoke swap delegate: ${error}`);
   }
 }
 

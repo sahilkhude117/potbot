@@ -35,16 +35,22 @@ export const sellTokenForSolWizard = new Scenes.WizardScene<BotContext>(
 
             await ctx.deleteMessage(loadingMsg.message_id);
 
-            if (tokenAccounts.length === 0) {
+            // Filter out SOL (native mint) - can't trade SOL for SOL
+            const tradableTokens = tokenAccounts.filter(token => token.mintAddress !== SOL_MINT);
+
+            if (tradableTokens.length === 0) {
                 await ctx.reply(
                     "❌ You don't have any tokens to sell.\n\n" +
+                    (tokenAccounts.length > 0 
+                        ? "Only SOL is available, which cannot be sold for SOL.\n\n"
+                        : "") +
                     "Buy some tokens first using the Buy option."
                 );
                 return ctx.scene.leave();
             }
 
             const buttons: any[][] = [];
-            const fetchMetadataPromises = tokenAccounts.map(async (token) => {
+            const fetchMetadataPromises = tradableTokens.map(async (token) => {
                 const metadata = await getTokenMetadata(token.mintAddress);
                 return { token, metadata };
             });

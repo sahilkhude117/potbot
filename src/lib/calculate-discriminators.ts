@@ -13,7 +13,9 @@ const instructions = [
   'add_trader',
   'remove_trader',
   'deposit',
-  'redeem'
+  'redeem',
+  'set_swap_delegate',
+  'revoke_swap_delegate'
 ];
 
 console.log('Anchor Instruction Discriminators:\n');

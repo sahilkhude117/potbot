@@ -32,7 +32,6 @@ export interface BuyTokenGroupWizardState extends Scenes.WizardSessionData {
     tokenMint: string;
     quantity: number;
     vaultBalance: number;
-    vaultPrivateKey: string;
     isAdmin: boolean;
     quoteData: any;
 }
@@ -55,7 +54,6 @@ export interface SellTokenGroupWizardState extends Scenes.WizardSessionData {
     tokenBalance: number;
     tokenDecimals: number;
     quantity: number;
-    vaultPrivateKey: string;
     isAdmin: boolean;
     quoteData: any;
     availableTokens?: Array<{
