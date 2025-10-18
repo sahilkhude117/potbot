@@ -12,7 +12,9 @@ import {
   getAssociatedTokenAddress, 
   TOKEN_PROGRAM_ID,
   createAssociatedTokenAccountInstruction,
-  getAccount
+  getAccount,
+  createSyncNativeInstruction,
+  NATIVE_MINT
 } from "@solana/spl-token";
 import { decodeSecretKey } from "../lib/utils";
 import { SOL_MINT } from "../lib/statits";
@@ -316,9 +318,14 @@ export async function depositToPot(
 
     const instructions: TransactionInstruction[] = [];
 
+    // Check if this is wrapped SOL (native mint)
+    const isWrappedSol = baseMint.equals(NATIVE_MINT);
+
     // Check if user's ATA exists, create if not
+    let userAtaExists = false;
     try {
       await getAccount(connection, userVaultAta);
+      userAtaExists = true;
     } catch (e) {
       instructions.push(
         createAssociatedTokenAccountInstruction(
@@ -327,6 +334,23 @@ export async function depositToPot(
           userPublicKey,
           baseMint
         )
+      );
+    }
+
+    // For wrapped SOL, we need to transfer SOL to the ATA and sync
+    if (isWrappedSol) {
+      // Transfer SOL to the wrapped SOL account
+      instructions.push(
+        SystemProgram.transfer({
+          fromPubkey: userPublicKey,
+          toPubkey: userVaultAta,
+          lamports: depositAmountLamports,
+        })
+      );
+      
+      // Sync native to update the token balance
+      instructions.push(
+        createSyncNativeInstruction(userVaultAta)
       );
     }
 
