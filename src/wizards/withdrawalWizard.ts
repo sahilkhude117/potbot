@@ -137,21 +137,19 @@ export const withdrawFromVaultWizard = new Scenes.WizardScene<BotContext>(
         try {
             const preview = await getWithdrawalPreview(state.potId, state.userId, sharesToBurn);
 
-            let assetsMessage = "*Assets you will receive:*\n\n";
-            for (const asset of preview.assetsToReturn) {
-                const symbol = asset.mintAddress === "So11111111111111111111111111111111111111112" 
-                    ? "SOL" 
-                    : asset.mintAddress.slice(0, 4) + "..." + asset.mintAddress.slice(-4);
-                assetsMessage += `• ${escapeMarkdownV2Amount(asset.amountReadable)} ${escapeMarkdownV2(symbol)}\n`;
-            }
+            const asset = preview.assetToReturn;
+            const symbol = asset.mintAddress === "So11111111111111111111111111111111111111112" 
+                ? "SOL" 
+                : asset.mintAddress.slice(0, 4) + "..." + asset.mintAddress.slice(-4);
 
             await ctx.replyWithMarkdownV2(
                 `💰 *Withdrawal Confirmation*\n\n` +
                 `*Pot:* ${escapeMarkdownV2(state.potName)}\n` +
                 `*Shares to Burn:* ${escapeMarkdownV2(sharesToBurn.toString())} \\(${escapeMarkdownV2(preview.withdrawalPercentage.toFixed(2))}% of total pot\\)\n` +
                 `*Estimated Value:* \\~\\$${escapeMarkdownV2Amount(preview.valueUSD)}\n\n` +
-                assetsMessage + `\n` +
-                `⚠️ _Note: You will receive a proportional share of ALL assets in the pot\\. If you want to convert to a single asset, you can do so later\\._`,
+                `*You will receive:*\n` +
+                `${escapeMarkdownV2Amount(asset.amountReadable)} ${escapeMarkdownV2(symbol)}\n\n` +
+                `💡 _You will receive your withdrawal in the pot's base asset \\(${escapeMarkdownV2(symbol)}\\)\\._`,
                 Markup.inlineKeyboard([
                     [
                         Markup.button.callback("✅ Confirm", "wizard_confirm_withdrawal"),
@@ -162,7 +160,7 @@ export const withdrawFromVaultWizard = new Scenes.WizardScene<BotContext>(
 
             return ctx.wizard.next();
         } catch (error: any) {
-            await ctx.reply(`${error.message}`)
+            await ctx.reply(`❌ ${error.message}`)
             return;
         }
     },
@@ -214,7 +212,7 @@ withdrawFromVaultWizard.action(/wizard_select_withdraw_pot_(.+)/, async (ctx) =>
             `You can enter:\n` +
             `• *Percentage* \\(e\\.g\\., \`50%\` for half\\)\n` +
             `• *Exact shares* \\(e\\.g\\., \`${escapeMarkdownV2(Math.floor(Number(position.shares) / 2).toString())}\`\\)\n\n` +
-            `⚠️ _You will receive a proportional share of ALL assets, not just one asset\\._`,
+            `💡 _Your withdrawal will be paid in the pot's base asset\\._`,
             Markup.inlineKeyboard([
                 [Markup.button.callback("❌ Cancel", "wizard_cancel_withdrawal")]
             ])
@@ -267,48 +265,45 @@ withdrawFromVaultWizard.action("wizard_confirm_withdrawal", async (ctx) => {
         const transferResults = await transferAssets(
             vaultKeypair,
             userKeypair.publicKey,
-            withdrawal.assetsToReturn
+            [withdrawal.assetToReturn]
         );
 
-        let assetsMessage = "";
-        for (let i = 0; i < transferResults.length; i++) {
-            const result = transferResults[i];
-            const asset = withdrawal.assetsToReturn[i];
-            const symbol = asset?.mintAddress === "So11111111111111111111111111111111111111112"
-                ? "SOL"
-                : asset?.mintAddress.slice(0, 4) + "..." + asset?.mintAddress.slice(-4);
-
-            if (result && result.success) {
-                const txLink = result.txId 
-                    ? `[View Transaction](https://explorer.solana.com/tx/${result.txId}?cluster=devnet)`
-                    : "";
-                assetsMessage += `✅ ${escapeMarkdownV2Amount(asset?.amountReadable ?? 0)} ${escapeMarkdownV2(symbol)} ${txLink}\n`;
-            } else {
-                assetsMessage += `❌ ${escapeMarkdownV2Amount(asset?.amountReadable ?? 0)} ${escapeMarkdownV2(symbol)} \\- Failed\n`;
-            }
-        }
-
-        interface TransferResult {
-            success: boolean;
-            txId?: string;
-            error?: string;
-        }
-
-        const successCount: number = (transferResults as TransferResult[]).filter((r: TransferResult) => r.success).length;
-        const failCount = transferResults.length - successCount;
+        const result = transferResults[0];
+        const asset = withdrawal.assetToReturn;
+        const symbol = asset.mintAddress === "So11111111111111111111111111111111111111112"
+            ? "SOL"
+            : asset.mintAddress.slice(0, 4) + "..." + asset.mintAddress.slice(-4);
 
         await ctx.deleteMessage(processingMsg.message_id);
 
-        await ctx.replyWithMarkdownV2(
-            `✅ *Withdrawal Complete\\!*\n\n` +
-            `*Shares Burned:* ${escapeMarkdownV2(withdrawal.sharesBurned.toString())}\n` +
-            `*Total Value:* \\~\\$${escapeMarkdownV2Amount(withdrawal.valueUSD)}\n\n` +
-            `*Assets Transferred:*\n${assetsMessage}\n` +
-            (failCount > 0 ? `⚠️ ${failCount} transfer\\(s\\) failed\\. Please contact support\\.` : ``),
-            {
-                ...CHECK_BALANCE_KEYBOARD
-            }
-        );
+        if (result && result.success) {
+            const txLink = result.txId 
+                ? `[View Transaction](https://explorer.solana.com/tx/${result.txId}?cluster=devnet)`
+                : "";
+            
+            await ctx.replyWithMarkdownV2(
+                `✅ *Withdrawal Complete\\!*\n\n` +
+                `*Shares Burned:* ${escapeMarkdownV2(withdrawal.sharesBurned.toString())}\n` +
+                `*Amount Received:* ${escapeMarkdownV2Amount(asset.amountReadable)} ${escapeMarkdownV2(symbol)}\n` +
+                `*Value:* \\~\\$${escapeMarkdownV2Amount(withdrawal.valueUSD)}\n\n` +
+                `${txLink ? `🔗 ${txLink}\n\n` : ''}` +
+                `💡 _Funds have been transferred to your wallet\\._`,
+                {
+                    ...CHECK_BALANCE_KEYBOARD
+                }
+            );
+        } else {
+            await ctx.replyWithMarkdownV2(
+                `❌ *Withdrawal Failed*\n\n` +
+                `*Shares Burned:* ${escapeMarkdownV2(withdrawal.sharesBurned.toString())}\n` +
+                `*Amount:* ${escapeMarkdownV2Amount(asset.amountReadable)} ${escapeMarkdownV2(symbol)}\n\n` +
+                `⚠️ Transfer failed: ${escapeMarkdownV2(result?.error || 'Unknown error')}\n\n` +
+                `Please contact support\\.`,
+                {
+                    ...CHECK_BALANCE_KEYBOARD
+                }
+            );
+        }
     } catch (error: any) {
         console.error(error);
         await ctx.reply(`❌ Withdrawal failed: ${error.message}`);
@@ -330,11 +325,11 @@ async function getWithdrawalPreview(
 ) : Promise<{
     withdrawalPercentage: number;
     valueUSD: number;
-    assetsToReturn: Array<{
+    assetToReturn: {
         mintAddress: string;
         amount: bigint;
         amountReadable: number;
-    }>;
+    };
 }> {
     const pot = await prismaClient.pot.findUnique({
         where: { id: potId },
@@ -359,42 +354,43 @@ async function getWithdrawalPreview(
 
     const withdrawalPercentage = (Number(sharesToBurn) / Number(pot.totalShares)) * 100;
 
-    const potValueUSD = await computePotValueInUSD(
-        pot.assets.map(a => ({ mintAddress: a.mintAddress, balance: a.balance }))
+    // Find the base asset (cashOutMint) in the pot's assets
+    const baseAsset = pot.assets.find(a => a.mintAddress === pot.cashOutMint);
+    
+    if (!baseAsset) {
+        throw new Error(`Base asset ${pot.cashOutMint} not found in pot. Please contact support.`);
+    }
+
+    if (baseAsset.balance === BigInt(0)) {
+        throw new Error("Insufficient liquidity in the pot's base asset. Cannot process withdrawal.");
+    }
+
+    // Calculate the amount to return based on shares
+    const amountToReturn = BigInt(
+        Math.floor(Number(baseAsset.balance) * Number(sharesToBurn) / Number(pot.totalShares))
     );
 
-    const valueUSD = potValueUSD * (Number(sharesToBurn) / Number(pot.totalShares));
+    if (amountToReturn === BigInt(0)) {
+        throw new Error("Withdrawal amount too small. Try withdrawing more shares.");
+    }
 
     const { getTokenDecimalsWithCache } = await import("../solana/getTokenDecimals");
-    const assetsToReturn: Array<{
-        mintAddress: string;
-        amount: bigint;
-        amountReadable: number;
-    }> = [];
+    const decimals = await getTokenDecimalsWithCache(baseAsset.mintAddress);
+    const amountReadable = Number(amountToReturn) / (10 ** decimals);
 
-    for (const asset of pot.assets) {
-        if (asset.balance === BigInt(0)) continue;
-
-        const amountToReturn = BigInt(
-            Math.floor(Number(asset.balance) * Number(sharesToBurn) / Number(pot.totalShares))
-        );
-
-        if (amountToReturn === BigInt(0)) continue;
-
-        const decimals = await getTokenDecimalsWithCache(asset.mintAddress);
-        const amountReadable = Number(amountToReturn) / (10 ** decimals);
-
-        assetsToReturn.push({
-            mintAddress: asset.mintAddress,
-            amount: amountToReturn,
-            amountReadable
-        });
-    }
+    // Calculate approximate USD value
+    const { getPriceInUSD } = await import("../solana/getPriceInUSD");
+    const priceUSD = await getPriceInUSD(baseAsset.mintAddress);
+    const valueUSD = amountReadable * priceUSD;
 
     return {
         withdrawalPercentage,
         valueUSD,
-        assetsToReturn
+        assetToReturn: {
+            mintAddress: baseAsset.mintAddress,
+            amount: amountToReturn,
+            amountReadable
+        }
     }
 }
 
@@ -405,11 +401,11 @@ export async function burnSharesAndWithdraw(
 ): Promise<{
     sharesBurned: bigint;
     valueUSD: number;
-    assetsToReturn: Array<{
+    assetToReturn: {
         mintAddress: string;
         amount: bigint;
         amountReadable: number;
-    }>;
+    };
 }> {
     return await prismaClient.$transaction(async (tx) => {
         const pot = await tx.pot.findUnique({
@@ -440,47 +436,43 @@ export async function burnSharesAndWithdraw(
             throw new Error("Pot has no shares");
         }
 
-        const withdrawalPercentage = Number(sharesToBurn) / Number(pot.totalShares);
-
-        const potValueUSD = await computePotValueInUSD(
-            pot.assets.map(a => ({ mintAddress: a.mintAddress, balance: a.balance })),
-        )
-
-        const valueUSD = potValueUSD * withdrawalPercentage;
-
-        const assetsToReturn: Array<{
-            mintAddress: string;
-            amount: bigint;
-            amountReadable: number;
-        }> = [];
-
-        for (const asset of pot.assets) {
-            if (asset.balance === BigInt(0)) continue;
-
-            const amountToReturn = BigInt(
-                Math.floor(Number(asset.balance) * withdrawalPercentage)
-            );
-
-            if (amountToReturn === BigInt(0)) continue;
-
-            const decimals = await getTokenDecimalsWithCache(asset.mintAddress);
-            const amountReadable = Number(amountToReturn) / (10 ** decimals);
-
-            assetsToReturn.push({
-                mintAddress: asset.mintAddress,
-                amount: amountToReturn,
-                amountReadable
-            });
-
-            await tx.asset.update({
-                where: { id: asset.id },
-                data: {
-                    balance: asset.balance - amountToReturn
-                }
-            });
+        // Find the base asset (cashOutMint) in the pot's assets
+        const baseAsset = pot.assets.find(a => a.mintAddress === pot.cashOutMint);
+        
+        if (!baseAsset) {
+            throw new Error(`Base asset ${pot.cashOutMint} not found in pot`);
         }
 
-        // burn shares
+        if (baseAsset.balance === BigInt(0)) {
+            throw new Error("Insufficient liquidity in the pot's base asset");
+        }
+
+        // Calculate the amount to return based on shares
+        const amountToReturn = BigInt(
+            Math.floor(Number(baseAsset.balance) * Number(sharesToBurn) / Number(pot.totalShares))
+        );
+
+        if (amountToReturn === BigInt(0)) {
+            throw new Error("Withdrawal amount too small");
+        }
+
+        const decimals = await getTokenDecimalsWithCache(baseAsset.mintAddress);
+        const amountReadable = Number(amountToReturn) / (10 ** decimals);
+
+        // Calculate approximate USD value
+        const { getPriceInUSD } = await import("../solana/getPriceInUSD");
+        const priceUSD = await getPriceInUSD(baseAsset.mintAddress);
+        const valueUSD = amountReadable * priceUSD;
+
+        // Update the base asset balance
+        await tx.asset.update({
+            where: { id: baseAsset.id },
+            data: {
+                balance: baseAsset.balance - amountToReturn
+            }
+        });
+
+        // Burn shares
         const newTotalShares = pot.totalShares - sharesToBurn;
         await tx.pot.update({
             where: { id: potId },
@@ -493,19 +485,24 @@ export async function burnSharesAndWithdraw(
             data: { shares: newUserShares }
         });
 
+        // Create withdrawal record
         const withdrawal = await tx.withdrawal.create({
             data: {
                 potId,
                 userId,
                 sharesBurned: sharesToBurn,
-                amountOut: BigInt(Math.floor(valueUSD * 1e6))
+                amountOut: amountToReturn
             }
         });
 
         return {
             sharesBurned: sharesToBurn,
             valueUSD,
-            assetsToReturn,
+            assetToReturn: {
+                mintAddress: baseAsset.mintAddress,
+                amount: amountToReturn,
+                amountReadable
+            }
         };
     }, {
         isolationLevel: "Serializable",
