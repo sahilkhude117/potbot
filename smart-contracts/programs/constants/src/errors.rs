@@ -10,4 +10,12 @@ pub enum PotError {
     TraderAlreadyExists,
     #[msg("Trader not found in the list.")]
     TraderNotFound,
+    #[msg("Deposit value should be greater than 0")]
+    ZeroDeposit,
+    #[msg("Shares should be greater than 0")]
+    ZeroShares,
+    #[msg("Calculation is overflowed")]
+    CalculationOverflow,
+    #[msg("You dont have enough shares to burn")]
+    InsufficientShares,
 }

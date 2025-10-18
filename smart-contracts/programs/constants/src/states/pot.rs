@@ -8,6 +8,8 @@ pub struct Pot {
     pub traders: Vec<Pubkey>,
     pub fees: PotFees,
     pub bump: u8,
+    pub base_mint: Pubkey,
+    pub total_shares: u64,
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Default)]
@@ -21,5 +23,7 @@ impl Pot {
         + 32 // admin pubkey
         + 4 + (MAX_TRADERS * 32) // traders vec
         + 2 + 2 // fees
-        + 1; // bump
+        + 1 // bump
+        + 32 // base_mint
+        + 8; // total_shares
 }

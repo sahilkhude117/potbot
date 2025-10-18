@@ -2,12 +2,17 @@ use anchor_lang::prelude::*;
 use crate::constants::POT_SEED;
 use crate::states::{Pot, PotFees};
 
-pub fn handler(ctx: Context<InitializePot>, fees: PotFees) -> Result<()> {
+pub fn handler(ctx: Context<InitializePot>, fees: PotFees, base_mint: Pubkey) -> Result<()> {
     let pot = &mut ctx.accounts.pot;
     pot.admin = ctx.accounts.admin.key();
     pot.fees = fees;
     pot.traders = Vec::new();
+
+    pot.base_mint = base_mint;
+    pot.total_shares = 0;
+
     pot.bump = ctx.bumps.pot;
+    
     Ok(())
 }
 
