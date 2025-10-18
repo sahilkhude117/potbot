@@ -196,9 +196,12 @@ depositSolToVaultWizard.action("wizard_confirm_deposit", async (ctx) => {
 
     try {
         await ctx.answerCbQuery("Processing deposit...");
-        const processingMsg = await ctx.reply("⏳ Processing your deposit...");
+        const processingMsg = await ctx.reply("⏳ Processing your on-chain deposit...");
 
-        const pot = await prismaClient.pot.findUnique({ where: { id: potId }});
+        const pot = await prismaClient.pot.findUnique({ 
+            where: { id: potId },
+            include: { admin: true }
+        });
         const user = await prismaClient.user.findUnique({ where: { id: userId }});
 
         if (!pot || !user) {
@@ -207,43 +210,46 @@ depositSolToVaultWizard.action("wizard_confirm_deposit", async (ctx) => {
             return ctx.scene.leave();
         }
 
-        const fromKeypair = Keypair.fromSecretKey(decodeSecretKey(user.privateKey));
-        const toVault = JSON.parse(pot.vaultAddress);
-        const toPublicKey = new PublicKey(toVault.publicKey);
+        // Import smart contract functions
+        const { depositToPot } = await import("../solana/smartContract");
+        
+        try {
+            // Call smart contract deposit function
+            const { signature, sharesMinted } = await depositToPot(
+                user.privateKey,
+                pot.admin.publicKey,
+                amount
+            );
 
-        const { message, success } = await sendSol(fromKeypair, toPublicKey, amount);
+            // After successful on-chain deposit, update database
+            const mintedShares = await mintSharesAndDeposit(
+                potId,
+                userId,
+                BigInt(amount * LAMPORTS_PER_SOL),
+            );
+            
+            const newShares = mintedShares.sharesMinted;
+            const totalUserShares = mintedShares.userNewShares;
+            const totalPotShares = mintedShares.newTotalShares;
 
-        if (success) {
-            try {
-                const mintedShares = await mintSharesAndDeposit(
-                    potId,
-                    userId,
-                    BigInt(amount * LAMPORTS_PER_SOL),
-                );
-                const newShares = mintedShares.sharesMinted;
-                const totalUserShares = mintedShares.userNewShares;
-                const totalPotShares = mintedShares.newTotalShares;
-
-                const userPercentage = ((Number(totalUserShares) / Number(totalPotShares)) * 100).toFixed(2);
-                const newSharesPercentage = ((Number(newShares) / Number(totalPotShares)) * 100).toFixed(2);
-                
-                await ctx.deleteMessage(processingMsg.message_id);
-                
-                await ctx.replyWithMarkdownV2(
-                    `✅ *Deposit Successful\\!*\n\n` +
-                    `*Amount Deposited:* ${escapeMarkdownV2Amount(amount)} SOL\n` +
-                    `*New Shares Minted:* ${escapeMarkdownV2(newShares.toString())} \\(${escapeMarkdownV2(newSharesPercentage)}%\\)\n` +
-                    `*Your Total Shares:* ${escapeMarkdownV2(totalUserShares.toString())} \\(${escapeMarkdownV2(userPercentage)}%\\)\n` +
-                    `*Pot Total Shares:* ${escapeMarkdownV2(totalPotShares.toString())}\n\n` +
-                    `_Deposit recorded in pot ledger\\._`
-                );
-            } catch (e: any) {
-                await ctx.deleteMessage(processingMsg.message_id);
-                await ctx.reply(`❌ ${e.message}`);
-            }
-        } else {
+            const userPercentage = ((Number(totalUserShares) / Number(totalPotShares)) * 100).toFixed(2);
+            const newSharesPercentage = ((Number(newShares) / Number(totalPotShares)) * 100).toFixed(2);
+            
             await ctx.deleteMessage(processingMsg.message_id);
-            await ctx.reply(`❌ Deposit failed: ${message}`);
+            
+            await ctx.replyWithMarkdownV2(
+                `✅ *Deposit Successful\\!*\n\n` +
+                `*Amount Deposited:* ${escapeMarkdownV2Amount(amount)} SOL\n` +
+                `*New Shares Minted:* ${escapeMarkdownV2(newShares.toString())} \\(${escapeMarkdownV2(newSharesPercentage)}%\\)\n` +
+                `*Your Total Shares:* ${escapeMarkdownV2(totalUserShares.toString())} \\(${escapeMarkdownV2(userPercentage)}%\\)\n` +
+                `*Pot Total Shares:* ${escapeMarkdownV2(totalPotShares.toString())}\n\n` +
+                `🔗 [View Transaction](https://explorer.solana.com/tx/${signature}?cluster=devnet)\n\n` +
+                `_Deposit recorded on\\-chain and in database\\._`
+            );
+        } catch (e: any) {
+            console.error("Deposit error:", e);
+            await ctx.deleteMessage(processingMsg.message_id);
+            await ctx.reply(`❌ Deposit failed: ${e.message || 'Unknown error'}`);
         }
     } catch (error) {
         console.error(error);
