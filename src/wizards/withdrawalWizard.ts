@@ -233,72 +233,62 @@ withdrawFromVaultWizard.action("wizard_confirm_withdrawal", async (ctx) => {
 
     try {
         await ctx.answerCbQuery("Processing withdrawal...");
-        const processingMsg = await ctx.reply("⏳ Processing withdrawal...");
-
-        const withdrawal = await burnSharesAndWithdraw(potId, userId, sharesToBurn);
-
-        const user = await prismaClient.user.findUnique({
-            where: {
-                id: userId
-            }
-        })
-        if (!user) {
-            await ctx.reply("User not found.");
-            return ctx.scene.leave();
-        }
-
-        const userKeypair = Keypair.fromSecretKey(decodeSecretKey(user.privateKey));
+        const processingMsg = await ctx.reply("⏳ Processing on-chain withdrawal...");
 
         const pot = await prismaClient.pot.findUnique({
-            where: {
-                id: potId
-            }
-        })
-        if (!pot) {
-            await ctx.reply("Pot not found.");
+            where: { id: potId },
+            include: { admin: true }
+        });
+        
+        const user = await prismaClient.user.findUnique({
+            where: { id: userId }
+        });
+
+        if (!user || !pot) {
+            await ctx.deleteMessage(processingMsg.message_id);
+            await ctx.reply("❌ User or pot not found.");
             return ctx.scene.leave();
         }
 
-        const vaultData = JSON.parse(pot.vaultAddress);
-        const vaultKeypair = Keypair.fromSecretKey(decodeSecretKey(vaultData.secretKey));
+        // Import smart contract functions
+        const { redeemFromPot } = await import("../solana/smartContract");
 
-        const transferResults = await transferAssets(
-            vaultKeypair,
-            userKeypair.publicKey,
-            [withdrawal.assetToReturn]
-        );
+        try {
+            // Call smart contract redeem function
+            const { signature, amountReceived } = await redeemFromPot(
+                user.privateKey,
+                pot.admin.publicKey,
+                sharesToBurn
+            );
 
-        const result = transferResults[0];
-        const asset = withdrawal.assetToReturn;
-        const symbol = asset.mintAddress === "So11111111111111111111111111111111111111112"
-            ? "SOL"
-            : asset.mintAddress.slice(0, 4) + "..." + asset.mintAddress.slice(-4);
+            // After successful on-chain redemption, update database
+            const withdrawal = await burnSharesAndWithdraw(potId, userId, sharesToBurn);
 
-        await ctx.deleteMessage(processingMsg.message_id);
+            const asset = withdrawal.assetToReturn;
+            const symbol = asset.mintAddress === "So11111111111111111111111111111111111111112"
+                ? "SOL"
+                : asset.mintAddress.slice(0, 4) + "..." + asset.mintAddress.slice(-4);
 
-        if (result && result.success) {
-            const txLink = result.txId 
-                ? `[View Transaction](https://explorer.solana.com/tx/${result.txId}?cluster=devnet)`
-                : "";
+            await ctx.deleteMessage(processingMsg.message_id);
             
             await ctx.replyWithMarkdownV2(
                 `✅ *Withdrawal Complete\\!*\n\n` +
                 `*Shares Burned:* ${escapeMarkdownV2(withdrawal.sharesBurned.toString())}\n` +
                 `*Amount Received:* ${escapeMarkdownV2Amount(asset.amountReadable)} ${escapeMarkdownV2(symbol)}\n` +
                 `*Value:* \\~\\$${escapeMarkdownV2Amount(withdrawal.valueUSD)}\n\n` +
-                `${txLink ? `🔗 ${txLink}\n\n` : ''}` +
-                `💡 _Funds have been transferred to your wallet\\._`,
+                `🔗 [View Transaction](https://explorer.solana.com/tx/${signature}?cluster=devnet)\n\n` +
+                `💡 _Funds have been transferred on\\-chain to your wallet\\._`,
                 {
                     ...CHECK_BALANCE_KEYBOARD
                 }
             );
-        } else {
+        } catch (e: any) {
+            console.error("Withdrawal error:", e);
+            await ctx.deleteMessage(processingMsg.message_id);
             await ctx.replyWithMarkdownV2(
                 `❌ *Withdrawal Failed*\n\n` +
-                `*Shares Burned:* ${escapeMarkdownV2(withdrawal.sharesBurned.toString())}\n` +
-                `*Amount:* ${escapeMarkdownV2Amount(asset.amountReadable)} ${escapeMarkdownV2(symbol)}\n\n` +
-                `⚠️ Transfer failed: ${escapeMarkdownV2(result?.error || 'Unknown error')}\n\n` +
-                `Please contact support\\.`,
+                `⚠️ ${escapeMarkdownV2(e.message || 'Unknown error')}\n\n` +
+                `Please try again or contact support\\.`,
                 {
                     ...CHECK_BALANCE_KEYBOARD
                 }
