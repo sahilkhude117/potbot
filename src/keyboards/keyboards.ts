@@ -19,6 +19,12 @@ export const ADD_POTBOT_TO_GROUP = Markup.inlineKeyboard([[
     Markup.button.url("Add Pot Bot to Group", "https://t.me/solana_pot_bot?startgroup=pot_xyz123")
 ]])
 
+export const ADD_POTBOT_TO_GROUP_WITH_DONE = Markup.inlineKeyboard([[
+    Markup.button.url("Add Pot Bot to Group", "https://t.me/solana_pot_bot?startgroup=pot_xyz123")
+],[
+    Markup.button.callback("Done", "show_pots")
+]])
+
 export const CREATE_NEW_POT = Markup.inlineKeyboard([[
     Markup.button.url("Create New Pot", "https://t.me/solana_pot_bot?start=create_new_bot")
 ]])
