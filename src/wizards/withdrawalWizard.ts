@@ -4,7 +4,7 @@ import { getTokenDecimalsWithCache } from "../solana/getTokenDecimals";
 import type { BotContext, WithdrawalWizardState } from "../lib/types";
 import { escapeMarkdownV2, escapeMarkdownV2Amount } from "../lib/utils";
 import { getUserPosition } from "../solana/getUserPosition";
-import { CHECK_BALANCE_KEYBOARD } from "../keyboards/keyboards";
+import { CHECK_BALANCE_KEYBOARD, DEFAULT_KEYBOARD } from "../keyboards/keyboards";
 import { PublicKey } from "@solana/web3.js";
 import { getPotPDA } from "../solana/smartContract";
 import { getAccount, getAssociatedTokenAddress } from "@solana/spl-token";
@@ -26,7 +26,9 @@ export const withdrawFromVaultWizard = new Scenes.WizardScene<BotContext>(
             });
 
             if (!existingUser) {
-                await ctx.reply("User not found. Please register first.");
+                await ctx.reply("User not found. Please register first.", {
+                    ...DEFAULT_KEYBOARD
+                });
                 return ctx.scene.leave();
             }
 
@@ -55,7 +57,9 @@ export const withdrawFromVaultWizard = new Scenes.WizardScene<BotContext>(
             });
 
             if (!pots.length) {
-                await ctx.reply("You don't have any shares in active pots.");
+                await ctx.reply("You don't have any shares in active pots.", {
+                    ...DEFAULT_KEYBOARD
+                });
                 return ctx.scene.leave();
             }
 
@@ -72,7 +76,7 @@ export const withdrawFromVaultWizard = new Scenes.WizardScene<BotContext>(
                 buttons.push(row);
             }
 
-            buttons.push([Markup.button.callback("❌ Cancel", "wizard_cancel_withdrawal")]);
+            buttons.push([Markup.button.callback("Cancel", "wizard_cancel_withdrawal")]);
 
             await ctx.reply(
                 "*Please select a pot to withdraw from:*",
@@ -86,7 +90,9 @@ export const withdrawFromVaultWizard = new Scenes.WizardScene<BotContext>(
             return ctx.wizard.next();
         } catch (e) {
             console.error(e);
-            await ctx.reply("Something went wrong while fetching your pots.");
+            await ctx.reply("Something went wrong while fetching your pots.", {
+                ...DEFAULT_KEYBOARD
+            });
             return ctx.scene.leave();
         }
     },
@@ -189,13 +195,17 @@ withdrawFromVaultWizard.action(/wizard_select_withdraw_pot_(.+)/, async (ctx) =>
         });
 
         if (!pot) {
-            await ctx.reply("This pot no longer exists.");
+            await ctx.reply("This pot no longer exists.", {
+                ...DEFAULT_KEYBOARD
+            });
             return ctx.scene.leave();
         }
 
         const member = pot.members[0];
         if (!member || member.shares === BigInt(0)) {
-            await ctx.reply("You don't have any shares in this pot.");
+            await ctx.reply("You don't have any shares in this pot.", {
+                ...DEFAULT_KEYBOARD
+            });
             return ctx.scene.leave();
         }
 
@@ -216,7 +226,7 @@ withdrawFromVaultWizard.action(/wizard_select_withdraw_pot_(.+)/, async (ctx) =>
             `• *Exact shares* \\(e\\.g\\., \`${escapeMarkdownV2(Math.floor(Number(position.shares) / 2).toString())}\`\\)\n\n` +
             `💡 _Your withdrawal will be paid in the pot's base asset\\._`,
             Markup.inlineKeyboard([
-                [Markup.button.callback("❌ Cancel", "wizard_cancel_withdrawal")]
+                [Markup.button.callback("Cancel", "wizard_cancel_withdrawal")]
             ])
         );
 
@@ -224,7 +234,9 @@ withdrawFromVaultWizard.action(/wizard_select_withdraw_pot_(.+)/, async (ctx) =>
         ctx.wizard.selectStep(2);
     } catch (e) {
         console.error(e);
-        await ctx.reply("Something went wrong. Please try again.");
+        await ctx.reply("Something went wrong. Please try again.", {
+            ...DEFAULT_KEYBOARD
+        });
         return ctx.scene.leave();
     }
 });
@@ -251,7 +263,9 @@ withdrawFromVaultWizard.action("wizard_confirm_withdrawal", async (ctx) => {
 
         if (!user || !pot) {
             await ctx.deleteMessage(processingMsg.message_id);
-            await ctx.reply("❌ User or pot not found.");
+            await ctx.reply("❌ User or pot not found.", {
+                ...DEFAULT_KEYBOARD
+            });
             return ctx.scene.leave();
         }
 
@@ -340,7 +354,8 @@ withdrawFromVaultWizard.action("wizard_confirm_withdrawal", async (ctx) => {
                 `🔗 [View Transaction](https://explorer.solana.com/tx/${signature}?cluster=devnet)\n\n` +
                 `💡 _Funds have been transferred on\\-chain to your wallet\\._`,
                 {
-                    ...CHECK_BALANCE_KEYBOARD
+                    link_preview_options: { is_disabled: true },
+                    ...DEFAULT_KEYBOARD
                 }
             );
         } catch (e: any) {
@@ -359,20 +374,24 @@ withdrawFromVaultWizard.action("wizard_confirm_withdrawal", async (ctx) => {
                 `⚠️ ${escapeMarkdownV2(errorMessage)}\n\n` +
                 `Please try again or contact support\\.`,
                 {
-                    ...CHECK_BALANCE_KEYBOARD
+                    ...DEFAULT_KEYBOARD
                 }
             );
         }
     } catch (error: any) {
         console.error(error);
-        await ctx.reply(`❌ Withdrawal failed: ${error.message}`);
+        await ctx.reply(`❌ Withdrawal failed: ${error.message}`, {
+            ...DEFAULT_KEYBOARD
+        });
     }
 
     return ctx.scene.leave();
 })
 
 withdrawFromVaultWizard.action("wizard_cancel_withdrawal", async (ctx) => {
-    await ctx.reply("❌ Withdrawal cancelled.");
+    await ctx.reply("❌ Withdrawal cancelled.", {
+        ...DEFAULT_KEYBOARD
+    });
     await ctx.answerCbQuery("Cancelled");
     return ctx.scene.leave();
 });

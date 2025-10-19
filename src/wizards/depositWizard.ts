@@ -7,6 +7,7 @@ import type { BotContext, DepositWizardState } from "../lib/types";
 import { getPriceInUSD } from "../solana/getPriceInUSD";
 import { SOL_MINT } from "../lib/statits";
 import { computePotValueInUSD } from "../solana/computePotValueInUSD";
+import { DEFAULT_KEYBOARD } from "../keyboards/keyboards";
 
 export const depositSolToVaultWizard = new Scenes.WizardScene<BotContext>(
     'deposit_sol_to_vault_wizard',
@@ -22,7 +23,9 @@ export const depositSolToVaultWizard = new Scenes.WizardScene<BotContext>(
             });
 
             if (!existingUser) {
-                await ctx.reply("User not found. Please register first.");
+                await ctx.reply("User not found. Please register first.", {
+                    ...DEFAULT_KEYBOARD
+                });
                 return ctx.scene.leave();
             }
 
@@ -45,7 +48,9 @@ export const depositSolToVaultWizard = new Scenes.WizardScene<BotContext>(
             })
 
             if (!pots.length) {
-                await ctx.reply("No active pots available right now.");
+                await ctx.reply("No active pots available right now.", {
+                    ...DEFAULT_KEYBOARD
+                });
                 return ctx.scene.leave();
             }
 
@@ -62,7 +67,7 @@ export const depositSolToVaultWizard = new Scenes.WizardScene<BotContext>(
                 buttons.push(row);
             }
 
-            buttons.push([Markup.button.callback("❌ Cancel", "wizard_cancel_deposit")]);
+            buttons.push([Markup.button.callback("Cancel", "wizard_cancel_deposit")]);
 
             await ctx.reply(
                 "*Please select a pot to deposit into:*",
@@ -76,7 +81,9 @@ export const depositSolToVaultWizard = new Scenes.WizardScene<BotContext>(
             return ctx.wizard.next();
         } catch (err) {
             console.error(err);
-            await ctx.reply("Something went wrong while fetching your pots.");
+            await ctx.reply("Something went wrong while fetching your pots.", {
+                ...DEFAULT_KEYBOARD
+            });
             return ctx.scene.leave();
         }
     },
@@ -147,7 +154,9 @@ depositSolToVaultWizard.action(/wizard_select_pot_(.+)/, async (ctx) => {
     const potId = ctx.match[1];
     const pot = await prismaClient.pot.findUnique({ where: { id: potId }});
     if (!pot) {
-        await ctx.reply("This pot no longer exists.");
+        await ctx.reply("This pot no longer exists.", {
+            ...DEFAULT_KEYBOARD
+        });
         return ctx.scene.leave();
     }
 
@@ -156,7 +165,9 @@ depositSolToVaultWizard.action(/wizard_select_pot_(.+)/, async (ctx) => {
 
     const user = await prismaClient.user.findUnique({ where: { id: state.userId } });
     if (!user) {
-        await ctx.reply("❌ User not found. Please register again.");
+        await ctx.reply("❌ User not found. Please register again.", {
+            ...DEFAULT_KEYBOARD
+        });
         return ctx.scene.leave();
     }
 
@@ -168,7 +179,10 @@ depositSolToVaultWizard.action(/wizard_select_pot_(.+)/, async (ctx) => {
             `❌ *Insufficient Balance*\n\n` +
             `You have only ${escapeMarkdownV2Amount(balance)} SOL\\.\n\n` +
             `You need at least 0\\.001 SOL for deposits\\.\n\n` +
-            `_Please deposit SOL to your wallet first\\._`
+            `_Please deposit SOL to your wallet first\\._`,
+            {
+                ...DEFAULT_KEYBOARD
+            }
         );
         return ctx.scene.leave();
     }
@@ -181,7 +195,7 @@ depositSolToVaultWizard.action(/wizard_select_pot_(.+)/, async (ctx) => {
         `How much SOL do you want to deposit\\?\n\n` +
         `Enter the amount in SOL \\(e\\.g\\., 0\\.5\\)`,
         Markup.inlineKeyboard([
-            [Markup.button.callback("❌ Cancel", "wizard_cancel_deposit")]
+            [Markup.button.callback("Cancel", "wizard_cancel_deposit")]
         ])
     );
 
@@ -205,7 +219,9 @@ depositSolToVaultWizard.action("wizard_confirm_deposit", async (ctx) => {
 
         if (!pot || !user) {
             await ctx.deleteMessage(processingMsg.message_id);
-            await ctx.reply("❌ Something went wrong. Please try again.");
+            await ctx.reply("❌ Something went wrong. Please try again.", {
+                ...DEFAULT_KEYBOARD
+            });
             return ctx.scene.leave();
         }
 
@@ -248,23 +264,33 @@ depositSolToVaultWizard.action("wizard_confirm_deposit", async (ctx) => {
                 `*Your Total Shares:* ${escapeMarkdownV2(totalUserShares.toString())} \\(${escapeMarkdownV2(userPercentage)}%\\)\n` +
                 `*Pot Total Shares:* ${escapeMarkdownV2(totalPotShares.toString())}\n\n` +
                 `🔗 [View Transaction](https://explorer.solana.com/tx/${signature}?cluster=devnet)\n\n` +
-                `_Deposit recorded on\\-chain and in database\\._`
+                `_Deposit recorded on\\-chain and in database\\._`,
+                {
+                    link_preview_options: { is_disabled: true },
+                    ...DEFAULT_KEYBOARD
+                }
             );
         } catch (e: any) {
             console.error("Deposit error:", e);
             await ctx.deleteMessage(processingMsg.message_id);
-            await ctx.reply(`❌ Deposit failed: ${e.message || 'Unknown error'}`);
+            await ctx.reply(`❌ Deposit failed: ${e.message || 'Unknown error'}`, {
+                ...DEFAULT_KEYBOARD
+            });
         }
     } catch (error) {
         console.error(error);
-        await ctx.reply("❌ Something went wrong while processing deposit.");
+        await ctx.reply("❌ Something went wrong while processing deposit.", {
+            ...DEFAULT_KEYBOARD
+        });
     }
 
     return ctx.scene.leave();
 })
 
 depositSolToVaultWizard.action("wizard_cancel_deposit", async (ctx) => {
-  await ctx.reply("❌ Deposit cancelled.");
+  await ctx.reply("❌ Deposit cancelled.", {
+      ...DEFAULT_KEYBOARD
+  });
   await ctx.answerCbQuery("Cancelled");
   return ctx.scene.leave();
 });

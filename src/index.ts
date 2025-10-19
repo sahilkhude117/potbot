@@ -166,7 +166,10 @@ bot.start(async (ctx) => {
 })
 
 bot.command('deposit', (ctx) => ctx.scene.enter("deposit_sol_to_vault_wizard"))
+bot.action('deposit', (ctx) => ctx.scene.enter("deposit_sol_to_vault_wizard"))
+
 bot.command('withdraw', (ctx) => ctx.scene.enter("withdraw_from_vault_wizard"))
+bot.action('withdraw', (ctx) => ctx.scene.enter("withdraw_from_vault_wizard"))
 
 async function handlePortfolio(ctx: any) {
   try {
@@ -242,6 +245,7 @@ async function showPersonalPortfolio(ctx: any) {
     let totalWithdrawnUSD = 0;
     const potDetails: Array<{
       name: string;
+      vaultAddress: string;
       depositedUSD: number;
       withdrawnUSD: number;
       currentValueUSD: number;
@@ -291,6 +295,7 @@ async function showPersonalPortfolio(ctx: any) {
       if (depositedUSD > 0) {
         potDetails.push({
             name: pot.name,
+            vaultAddress: pot.potSeed,
             depositedUSD,
             withdrawnUSD,
             currentValueUSD: position.valueUSD,
@@ -344,6 +349,7 @@ async function showPersonalPortfolio(ctx: any) {
         const statusEmoji = pot.isActive ? "📈" : "📤"; 
         
         message += `${statusEmoji} *${escapeMarkdownV2(pot.name)}* ${potPnlEmoji}\n`;
+        message += `┣ Vault: \`${escapeMarkdownV2(pot.vaultAddress)}\`\n`;
         message += `┣ Deposited: \`\\$${escapeMarkdownV2Amount(pot.depositedUSD)}\`\n`;
         if (pot.withdrawnUSD > 0) {
             message += `┣ Withdrawn: \`\\$${escapeMarkdownV2Amount(pot.withdrawnUSD)}\`\n`;
@@ -491,6 +497,12 @@ async function showGroupPortfolio(ctx: any) {
 
   let message = `*📈 Group Portfolio: ${escapeMarkdownV2(pot.name || "Unnamed Pot")}*\n\n`;
   
+  // Add vault address right below the name
+  if (pot.potSeed) {
+    message += `*🏦 Vault Address:*\n\`${escapeMarkdownV2(pot.potSeed)}\`\n\n`;
+    message += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
+  }
+  
   message += `*💎 Key Metrics*\n\n`;
   message += `*Total Value Locked \\(TVL\\):*\n\`\\$${escapeMarkdownV2Amount(potValueUSD)}\`\n\n`;
   message += `*All\\-Time PnL:*\n${pnlSign}\`\\$${escapeMarkdownV2Amount(Math.abs(allTimePnLUSD))}\` \\(${pnlSign}\`${escapeMarkdownV2Amount(Math.abs(allTimePnLPercentage))}%\`\\) ${pnlEmoji}\n\n`;
@@ -557,111 +569,158 @@ bot.action("portfolio", async (ctx) => {
 
 bot.action("buy", (ctx) => ctx.scene.enter("buy_token_with_sol_wizard"));
 bot.action("buy_token_with_solana_group", (ctx) => {
-    if (ctx.chat?.type === 'private') {
-        return ctx.reply("❌ This action is only available in pot group chats.");
+    try {
+        if (ctx.chat?.type === 'private') {
+            return ctx.reply("❌ This action is only available in pot group chats.", {
+                ...DEFAULT_KEYBOARD
+            });
+        }
+        return ctx.scene.enter("buy_token_with_sol_wizard_group");
+    } catch (error) {
+        console.error("Error in buy_token_with_solana_group action:", error);
+        const isGroup = (ctx.chat?.type === "group" || ctx.chat?.type === "supergroup");
+        return ctx.reply("❌ Failed to start buy wizard. Please try again.", {
+            ...(isGroup ? DEFAULT_GROUP_KEYBOARD : DEFAULT_KEYBOARD)
+        });
     }
-    return ctx.scene.enter("buy_token_with_sol_wizard_group");
 });
 
 bot.action("sell", (ctx) => ctx.scene.enter("sell_token_for_sol_wizard"))
 
 bot.action("sell_token_for_solana_group", (ctx) => {
-    if (ctx.chat?.type === 'private') {
-        return ctx.reply("❌ This action is only available in pot group chats.");
+    try {
+        if (ctx.chat?.type === 'private') {
+            return ctx.reply("❌ This action is only available in pot group chats.", {
+                ...DEFAULT_KEYBOARD
+            });
+        }
+        return ctx.scene.enter("sell_token_for_sol_wizard_group");
+    } catch (error) {
+        console.error("Error in sell_token_for_solana_group action:", error);
+        const isGroup = (ctx.chat?.type === "group" || ctx.chat?.type === "supergroup");
+        return ctx.reply("❌ Failed to start sell wizard. Please try again.", {
+            ...(isGroup ? DEFAULT_GROUP_KEYBOARD : DEFAULT_KEYBOARD)
+        });
     }
-    return ctx.scene.enter("sell_token_for_sol_wizard_group");
 });
 
 bot.action("public_key", async ctx => {
-    const existingUser = await prismaClient.user.findFirst({
-        where: {
-            telegramUserId: ctx.from?.id.toString()
+    try {
+        const existingUser = await prismaClient.user.findFirst({
+            where: {
+                telegramUserId: ctx.from?.id.toString()
+            }
+        });
+
+        if (existingUser) {
+          const {empty, message} = await getBalanceMessage(existingUser.publicKey.toString());
+
+          let keyMessage = `*🔑 Your Wallet Address:*\n`;
+          keyMessage += `\`${escapeMarkdownV2(existingUser?.publicKey)}\`\n\n`;
+          
+          if (empty) {
+            keyMessage += `*💰 Balance:*\n`;
+            keyMessage += `Your wallet is currently empty\\.\n\n`;
+            keyMessage += `_Please fund your wallet with SOL to start trading\\._`;
+          } else {
+            keyMessage += `*💰 Balance:*\n`;
+            keyMessage += `${escapeMarkdownV2(message)}`;
+          }
+
+          return ctx.replyWithMarkdownV2(keyMessage, {
+              ...DEFAULT_KEYBOARD
+          });
+        } else {
+          return ctx.reply(`Sorry! We are unable to find your publicKey`, {
+              ...DEFAULT_KEYBOARD
+          }); 
         }
-    });
-
-    if (existingUser) {
-      const {empty, message} = await getBalanceMessage(existingUser.publicKey.toString());
-
-      let keyMessage = `*🔑 Your Wallet Address:*\n`;
-      keyMessage += `\`${escapeMarkdownV2(existingUser?.publicKey)}\`\n\n`;
-      
-      if (empty) {
-        keyMessage += `*💰 Balance:*\n`;
-        keyMessage += `Your wallet is currently empty\\.\n\n`;
-        keyMessage += `_Please fund your wallet with SOL to start trading\\._`;
-      } else {
-        keyMessage += `*💰 Balance:*\n`;
-        keyMessage += `${escapeMarkdownV2(message)}`;
-      }
-
-      return ctx.replyWithMarkdownV2(keyMessage, {
-          ...DEFAULT_KEYBOARD
-      });
-    } else {
-      return ctx.reply(`Sorry! We are unable to find your publicKey`); 
+    } catch (error) {
+        console.error("Error in public_key action:", error);
+        return ctx.reply("❌ Failed to fetch your public key. Please try again.", {
+            ...DEFAULT_KEYBOARD
+        });
     }
 });
 
 bot.action("private_key", async ctx => {
-  const user = await prismaClient.user.findFirst({
-      where: {
-          telegramUserId: ctx.from?.id.toString()
-      }
-  })
+  try {
+    const user = await prismaClient.user.findFirst({
+        where: {
+            telegramUserId: ctx.from?.id.toString()
+        }
+    })
 
-  if (user) {
-    let privateKeyMessage = `*🔐 Your Private Key*\n\n`;
-    privateKeyMessage += `⚠️ *KEEP THIS SECRET\\!*\n\n`;
-    privateKeyMessage += `\`${escapeMarkdownV2(user.privateKey)}\`\n\n`;
-    privateKeyMessage += `*🚨 Security Warning:*\n`;
-    privateKeyMessage += `• Never share this with anyone\n`;
-    privateKeyMessage += `• Anyone with this key can access your funds\n`;
-    privateKeyMessage += `• This message will auto\\-delete in 1 minute\n\n`;
-    privateKeyMessage += `_Save it securely now\\!_`;
+    if (user) {
+      let privateKeyMessage = `*🔐 Your Private Key*\n\n`;
+      privateKeyMessage += `⚠️ *KEEP THIS SECRET\\!*\n\n`;
+      privateKeyMessage += `\`${escapeMarkdownV2(user.privateKey)}\`\n\n`;
+      privateKeyMessage += `*🚨 Security Warning:*\n`;
+      privateKeyMessage += `• Never share this with anyone\n`;
+      privateKeyMessage += `• Anyone with this key can access your funds\n`;
+      privateKeyMessage += `• This message will auto\\-delete in 1 minute\n\n`;
+      privateKeyMessage += `_Save it securely now\\!_`;
 
-    const sentMessage = await ctx.replyWithMarkdownV2(privateKeyMessage, {
-      ...DEFAULT_KEYBOARD
-    });
+      const sentMessage = await ctx.replyWithMarkdownV2(privateKeyMessage, {
+        ...DEFAULT_KEYBOARD
+      });
 
-    // Delete the message after 1 minute (60000 milliseconds)
-    setTimeout(async () => {
-      try {
-        await ctx.deleteMessage(sentMessage.message_id);
-      } catch (error) {
-        console.error("Failed to delete private key message:", error);
-      }
-    }, 60000);
+      // Delete the message after 1 minute (60000 milliseconds)
+      setTimeout(async () => {
+        try {
+          await ctx.deleteMessage(sentMessage.message_id);
+        } catch (error) {
+          console.error("Failed to delete private key message:", error);
+        }
+      }, 60000);
 
-    return sentMessage;
-  } else {
-    return ctx.reply(`Sorry! We are unable to find your private key`);
+      return sentMessage;
+    } else {
+      return ctx.reply(`Sorry! We are unable to find your private key`, {
+          ...DEFAULT_KEYBOARD
+      });
+    }
+  } catch (error) {
+      console.error("Error in private_key action:", error);
+      return ctx.reply("❌ Failed to fetch your private key. Please try again.", {
+          ...DEFAULT_KEYBOARD
+      });
   }
 });
 
 bot.action("balance", async ctx => {
-    const existingUser = await prismaClient.user.findFirst({
-        where: {
-            telegramUserId: ctx.from?.id.toString()
+    try {
+        const existingUser = await prismaClient.user.findFirst({
+            where: {
+                telegramUserId: ctx.from?.id.toString()
+            }
+        });
+
+        if (existingUser) {
+          const {empty, message} = await getBalanceMessage(existingUser.publicKey.toString());
+
+          let balanceMessage = `*💰 Your Balance:*\n\n`;
+          
+          if (empty) {
+            balanceMessage += `You have 0 SOL in your account\\.\n\n`;
+            balanceMessage += `_Please fund your wallet to start trading\\._`;
+          } else {
+            balanceMessage += `${escapeMarkdownV2(message)}`;
+          }
+
+          return ctx.replyWithMarkdownV2(balanceMessage, {
+              ...DEFAULT_KEYBOARD
+          });
+        } else {
+          return ctx.reply(`Sorry! We are unable to load your Balance`, {
+              ...DEFAULT_KEYBOARD
+          }); 
         }
-    });
-
-    if (existingUser) {
-      const {empty, message} = await getBalanceMessage(existingUser.publicKey.toString());
-
-      let balanceMessage = `*💰 Your Balance:*\n\n`;
-      
-      if (empty) {
-        balanceMessage += `You have 0 SOL in your account\\.\n\n`;
-        balanceMessage += `_Please fund your wallet to start trading\\._`;
-      } else {
-        balanceMessage += `${escapeMarkdownV2(message)}`;
-      }
-
-      return ctx.replyWithMarkdownV2(balanceMessage, {
-          ...DEFAULT_KEYBOARD
-      });
-    } else {
-      return ctx.reply(`Sorry! We are unable to load your Balance`); 
+    } catch (error) {
+        console.error("Error in balance action:", error);
+        return ctx.reply("❌ Failed to fetch your balance. Please try again.", {
+            ...DEFAULT_KEYBOARD
+        });
     }
 })
 
@@ -687,6 +746,20 @@ bot.action("create_pot", async (ctx) => {
         0  // redemptionFeeBps 
       );
 
+      // Add admin as a trader on-chain automatically
+      let adminTraderSignature = "";
+      try {
+        adminTraderSignature = await addTraderOnChain(
+          existingUser.privateKey,
+          potSeedPublicKey,
+          existingUser.publicKey
+        );
+        console.log(`✅ Admin added as trader on-chain: ${adminTraderSignature}`);
+      } catch (traderError) {
+        console.error("⚠️ Failed to add admin as trader:", traderError);
+        // Continue with pot creation even if this fails - admin can be added later
+      }
+
       // Create pot in database with PDA as vault address and pot seed
       const pot = await prismaClient.pot.create({
         data: {
@@ -706,7 +779,7 @@ bot.action("create_pot", async (ctx) => {
 
 *On\\-Chain Vault Address \\(PDA\\)*: \`${escapeMarkdownV2(potPDA.toBase58())}\`
 
-*Transaction Signature*: 🔗 [View on Solana Explorer](https://explorer.solana.com/tx/${escapeMarkdownV2(signature)})\n\n
+*Init Transaction*: 🔗 [View on Explorer](https://explorer.solana.com/tx/${escapeMarkdownV2(signature)}?cluster=devnet)${adminTraderSignature ? `\n\n*Admin Trader TX*: 🔗 [View on Explorer](https://explorer.solana.com/tx/${escapeMarkdownV2(adminTraderSignature)}?cluster=devnet)` : ''}\n\n
 
 *Please follow these steps carefully:*
 
@@ -728,105 +801,174 @@ bot.action("create_pot", async (ctx) => {
 })
 
 bot.action("join_pot", async ctx => {
-  const existingUser = await prismaClient.user.findFirst({
-    where: {
-      telegramUserId: ctx.from.id.toString()
-    }
-  })
-
-  const pots = await prismaClient.pot.findMany({
-    where: { 
-      isGroupAdded: true, 
-      inviteLink: { not: null },
-      members: {
-        none: { userId:  existingUser?.id }, // exclude pots where user is already a member
-      },
-    }, 
-    select: { id: true, name: true },
-  });
-
-  if (!pots.length) {
-    return ctx.reply("No active pots available right now.", {
-      ...DEFAULT_KEYBOARD
-    });
-  }
-
-  const buttons: any[][] = [];
-  for (let i = 0; i < pots.length; i += 2) {
-    const row = pots
-      .slice(i, i + 2)
-      .map((pot) => Markup.button.callback(pot.name || `Pot ${i + 1}`, `join_pot_${pot.id}`));
-    buttons.push(row);
-  }
-
-  await ctx.reply(
-    `*Here are the available pots:*`,
-    {
-      parse_mode: "MarkdownV2",
-      ...Markup.inlineKeyboard(buttons),
-    }
-  );
-})
-
-bot.action(/join_pot_(.+)/, async (ctx) => {
-  const potId = ctx.match[1];
-  const pot = await prismaClient.pot.findUnique({ where: { id: potId } });
-  const existingUser = await prismaClient.user.findFirst({
-    where: {
-      telegramUserId: ctx.from.id.toString()
-    }
-  });
-  const userId = existingUser?.id as string
-  const isAdmin = pot?.adminId == userId;
-
-  if (!pot) {
-    return ctx.reply("This pot no longer exists.");
-  }
-
-  const role = isAdmin ? "ADMIN" : "MEMBER";
-
-  const pot_member = await prismaClient.pot_Member.create({
-    data: {
-      potId: pot.id,
-      userId: userId,
-      role: role
-    }
-  })
-
-  await ctx.replyWithMarkdownV2(
-    `*GM GM\\!* \n\n` +
-    `You are now a proud member of the pot *${escapeMarkdownV2(pot.name)}* \n\n` +
-    `Join the Official Group from here: ${escapeMarkdownV2(pot.inviteLink as string)} \n\n` +
-    `Get ready to trade, grow, and earn together with your group\\.\n\n` +
-    `_Stay active — more features and rewards are coming soon\\!_`
-  );
-});
-
-bot.action("create_invite", async ctx => {
-  const inviteLink = await ctx.createChatInviteLink();
-  const telegramGroupId = ctx.chat?.id.toString();
-
   try {
-    const pot = await prismaClient.pot.update({
+    const existingUser = await prismaClient.user.findFirst({
       where: {
-        telegramGroupId: telegramGroupId,
-      },
-      data : {
-        inviteLink: inviteLink.invite_link
+        telegramUserId: ctx.from.id.toString()
       }
     })
 
-    ctx.reply(`Successful! I am the Promoted now 😎. Here is the Invite Link to add members to your pot: ${pot.inviteLink}`, {
-      ...DEFAULT_GROUP_KEYBOARD
+    const pots = await prismaClient.pot.findMany({
+      where: { 
+        isGroupAdded: true, 
+        inviteLink: { not: null },
+        members: {
+          none: { userId:  existingUser?.id }, // exclude pots where user is already a member
+        },
+      }, 
+      select: { id: true, name: true },
+    });
+
+    if (!pots.length) {
+      return ctx.reply("No active pots available right now.", {
+        ...DEFAULT_KEYBOARD
+      });
+    }
+
+    const buttons: any[][] = [];
+    for (let i = 0; i < pots.length; i += 2) {
+      const row = pots
+        .slice(i, i + 2)
+        .map((pot) => Markup.button.callback(pot.name || `Pot ${i + 1}`, `join_pot_${pot.id}`));
+      buttons.push(row);
+    }
+
+    await ctx.reply(
+      `*Here are the available pots:*`,
+      {
+        parse_mode: "MarkdownV2",
+        ...Markup.inlineKeyboard(buttons),
+      }
+    );
+  } catch (error) {
+      console.error("Error in join_pot action:", error);
+      return ctx.reply("❌ Failed to load available pots. Please try again.", {
+          ...DEFAULT_KEYBOARD
+      });
+  }
+})
+
+bot.action(/join_pot_(.+)/, async (ctx) => {
+  try {
+    const potId = ctx.match[1];
+    const pot = await prismaClient.pot.findUnique({ where: { id: potId } });
+    const existingUser = await prismaClient.user.findFirst({
+      where: {
+        telegramUserId: ctx.from.id.toString()
+      }
+    });
+    const userId = existingUser?.id as string
+    const isAdmin = pot?.adminId == userId;
+
+    if (!pot) {
+      return ctx.reply("This pot no longer exists.", {
+        ...DEFAULT_KEYBOARD
+      });
+    }
+
+    const role = isAdmin ? "ADMIN" : "MEMBER";
+
+    const pot_member = await prismaClient.pot_Member.create({
+      data: {
+        potId: pot.id,
+        userId: userId,
+        role: role
+      }
     })
-  } catch (e) {
-    await ctx.reply("Opps! I am not admin yet 😔");
+
     await ctx.replyWithMarkdownV2(
-  `*Please Enable Full Bot Functionality:*\n\n` +
-  `_You can do this by opening the group info \\> Administrators \\> Add Admin \\> Select me and grant permissions_\n\n` + 
-  `After you are done, *click the button below to test* and create the invite link\\.`, {
-    ...CREATE_INVITE_DONE_KEYBOARD
-  })
+      `*GM GM\\!* \n\n` +
+      `You are now a proud member of the pot *${escapeMarkdownV2(pot.name)}* \n\n` +
+      `Join the Official Group from here: ${escapeMarkdownV2(pot.inviteLink as string)} \n\n` +
+      `Get ready to trade, grow, and earn together with your group\\.\n\n` +
+      `_Stay active — more features and rewards are coming soon\\!_`,
+      {
+        ...DEFAULT_KEYBOARD
+      }
+    );
+  } catch (error) {
+      console.error("Error in join_pot action:", error);
+      return ctx.reply("❌ Failed to join pot. Please try again.", {
+          ...DEFAULT_KEYBOARD
+      });
+  }
+});
+
+bot.action("create_invite", async ctx => {
+  try {
+    const telegramGroupId = ctx.chat?.id.toString();
+    
+    // First, get the pot to access vault address and other details
+    const pot = await prismaClient.pot.findUnique({
+      where: {
+        telegramGroupId: telegramGroupId,
+      },
+      include: {
+        admin: true
+      }
+    });
+
+    if (!pot) {
+      await ctx.reply("❌ No pot found for this group.", {
+        ...DEFAULT_GROUP_KEYBOARD
+      });
+      return;
+    }
+
+    // Create invite link with pot description
+    let description = `🏦 Vault: ${pot.potSeed}\n`;
+    description += `👤 Admin: @${ctx.from?.username || 'Admin'}\n`;
+    description += `📅 Created: ${pot.createdAt.toLocaleDateString()}`;
+    
+    const inviteLink = await ctx.createChatInviteLink({
+      name: `${pot.name} - Pot Invite`,
+      member_limit: undefined, // No limit
+    });
+
+    // Try to set chat description (requires admin permission)
+    try {
+      if (ctx.chat?.id) {
+        await ctx.telegram.setChatDescription(ctx.chat.id, description);
+      }
+    } catch (descError) {
+      console.log("Could not set chat description:", descError);
+      // Continue even if description setting fails
+    }
+
+    try {
+      await prismaClient.pot.update({
+        where: {
+          telegramGroupId: telegramGroupId,
+        },
+        data : {
+          inviteLink: inviteLink.invite_link
+        }
+      });
+
+      let successMessage = `✅ *Successful\\!* I am promoted now 😎\n\n`;
+      successMessage += `*📋 Pot Details:*\n`;
+      successMessage += `*Name:* ${escapeMarkdownV2(pot.name)}\n`;
+      successMessage += `*Vault:* \`${escapeMarkdownV2(pot.potSeed)}\`\n\n`;
+      successMessage += `*🔗 Invite Link:*\n${escapeMarkdownV2(inviteLink.invite_link)}\n\n`;
+      successMessage += `_Share this link to invite members to your pot\\!_`;
+
+      ctx.replyWithMarkdownV2(successMessage, {
+        ...DEFAULT_GROUP_KEYBOARD
+      });
+    } catch (e) {
+      await ctx.reply("Opps! I am not admin yet 😔");
+      await ctx.replyWithMarkdownV2(
+    `*Please Enable Full Bot Functionality:*\n\n` +
+    `_You can do this by opening the group info \\> Administrators \\> Add Admin \\> Select me and grant permissions_\n\n` + 
+    `After you are done, *click the button below to test* and create the invite link\\.`, {
+      ...CREATE_INVITE_DONE_KEYBOARD
+    })
+    }
+  } catch (error) {
+      console.error("Error in create_invite action:", error);
+      await ctx.reply("❌ Failed to create invite link. Please make sure I have admin permissions.", {
+          ...DEFAULT_GROUP_KEYBOARD
+      });
   }
 })
 
@@ -967,94 +1109,99 @@ bot.action("show_pots", async ctx => {
 })
 
 bot.on(message('new_chat_members'), async (ctx) => {
-  const newMembers = ctx.message.new_chat_members;
-  for (const member of newMembers) {
-    // Skip if the bot itself is being added
-    if (member.is_bot) {
-      continue;
-    }
-
-    const existingUser = await prismaClient.user.findFirst({
-      where: {
-        telegramUserId: member.id.toString(),
-      }
-    })
-    
-    if (existingUser) {
-      const pot = await prismaClient.pot.findUnique({ 
-        where: { 
-          telegramGroupId: ctx.chat.id.toString()
-        } 
-      });
-
-      if (!pot) {
-        continue; // Skip if no pot exists for this group
+  try {
+    const newMembers = ctx.message.new_chat_members;
+    for (const member of newMembers) {
+      // Skip if the bot itself is being added
+      if (member.is_bot) {
+        continue;
       }
 
-      const isAdmin = pot?.adminId == existingUser.id;
-      const role = isAdmin ? "ADMIN" : "MEMBER";
-
-      const pot_member = await prismaClient.pot_Member.findUnique({
+      const existingUser = await prismaClient.user.findFirst({
         where: {
-          userId_potId: {
-            userId: existingUser.id,
-            potId: pot.id,
-          }
+          telegramUserId: member.id.toString(),
         }
       })
-
-      if (pot_member) {
-        await ctx.reply(`👋 GM GM! ${member.first_name}! Glad to have you here.`, {
-          ...DEFAULT_GROUP_KEYBOARD
+      
+      if (existingUser) {
+        const pot = await prismaClient.pot.findUnique({ 
+          where: { 
+            telegramGroupId: ctx.chat.id.toString()
+          } 
         });
+
+        if (!pot) {
+          continue; // Skip if no pot exists for this group
+        }
+
+        const isAdmin = pot?.adminId == existingUser.id;
+        const role = isAdmin ? "ADMIN" : "MEMBER";
+
+        const pot_member = await prismaClient.pot_Member.findUnique({
+          where: {
+            userId_potId: {
+              userId: existingUser.id,
+              potId: pot.id,
+            }
+          }
+        })
+
+        if (pot_member) {
+          await ctx.reply(`👋 GM GM! ${member.first_name}! Glad to have you here.`, {
+            ...DEFAULT_GROUP_KEYBOARD
+          });
+        } else {
+          await prismaClient.pot_Member.create({
+            data: {
+              potId: pot.id,
+              userId: existingUser.id,
+              role: role
+            }
+          })
+          await ctx.reply(`👋 GM GM! ${member.first_name}! Glad to have you here.`, {
+            ...DEFAULT_GROUP_KEYBOARD
+          });
+        }
       } else {
+        // Create new user with the member's ID, not ctx.from.id
+        const keypair = Keypair.generate();
+        const newUser = await prismaClient.user.create({
+            data: {
+                telegramUserId: member.id.toString(), // Fixed: use member.id instead of ctx.from.id
+                publicKey: keypair.publicKey.toBase58(),
+                privateKey: keypair.secretKey.toBase64()
+            }
+        })
+
+        const pot = await prismaClient.pot.findUnique({ 
+          where: { 
+            telegramGroupId: ctx.chat.id.toString()
+          } 
+        });
+
+        if (!pot) {
+          continue; // Skip if no pot exists for this group
+        }
+
+        const isAdmin = pot?.adminId == newUser.id;
+        const role = isAdmin ? "ADMIN" : "MEMBER";
+        
         await prismaClient.pot_Member.create({
           data: {
             potId: pot.id,
-            userId: existingUser.id,
+            userId: newUser.id,
             role: role
           }
         })
-        await ctx.reply(`👋 GM GM! ${member.first_name}! Glad to have you here.`, {
-          ...DEFAULT_GROUP_KEYBOARD
+
+        await ctx.reply(`👋 GM GM! ${member.first_name}! Glad to have you here.`,{
+          ...SOLANA_POT_BOT_WITH_START_KEYBOARD
         });
-      }
-    } else {
-      // Create new user with the member's ID, not ctx.from.id
-      const keypair = Keypair.generate();
-      const newUser = await prismaClient.user.create({
-          data: {
-              telegramUserId: member.id.toString(), // Fixed: use member.id instead of ctx.from.id
-              publicKey: keypair.publicKey.toBase58(),
-              privateKey: keypair.secretKey.toBase64()
-          }
-      })
-
-      const pot = await prismaClient.pot.findUnique({ 
-        where: { 
-          telegramGroupId: ctx.chat.id.toString()
-        } 
-      });
-
-      if (!pot) {
-        continue; // Skip if no pot exists for this group
-      }
-
-      const isAdmin = pot?.adminId == newUser.id;
-      const role = isAdmin ? "ADMIN" : "MEMBER";
-      
-      await prismaClient.pot_Member.create({
-        data: {
-          potId: pot.id,
-          userId: newUser.id,
-          role: role
-        }
-      })
-
-      await ctx.reply(`👋 GM GM! ${member.first_name}! Glad to have you here.`,{
-        ...SOLANA_POT_BOT_WITH_START_KEYBOARD
-      });
-    }  
+      }  
+    }
+  } catch (error) {
+      console.error("Error handling new_chat_members:", error);
+      // Don't reply with error to avoid spamming the group
   }
 });
 

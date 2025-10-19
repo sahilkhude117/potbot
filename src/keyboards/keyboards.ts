@@ -9,6 +9,9 @@ export const DEFAULT_KEYBOARD = Markup.inlineKeyboard([[
     Markup.button.callback("Join Pot", "join_pot"),
     Markup.button.callback("My Pots", "show_pots")
 ],[
+    Markup.button.callback("Deposit", "deposit"),
+    Markup.button.callback("Withdraw", "withdraw")
+],[
     Markup.button.callback("Buy", "buy"),
     Markup.button.callback("Sell", "sell")
 ],[

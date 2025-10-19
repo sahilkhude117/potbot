@@ -7,6 +7,7 @@ import { decodeSecretKey, escapeMarkdownV2, escapeMarkdownV2Amount } from "../li
 import { getUserTokenAccounts, getTokenMetadata } from "../solana/getTokenAccounts";
 import { executeSwap, getQuote } from "../solana/swapAssetsWithJup";
 import { getConnection } from "../solana/getConnection";
+import { DEFAULT_GROUP_KEYBOARD } from "../keyboards/keyboards";
 
 const connection = getConnection();
 
@@ -63,7 +64,7 @@ export const sellTokenForSolWizardGroup = new Scenes.WizardScene<BotContext>(
             const chatId = ctx.chat?.id.toString();
 
             if (!telegramUserId || !chatId) {
-                await ctx.reply("❌ Unable to identify user or chat.");
+                await ctx.reply("❌ Unable to identify user or chat.", { ...DEFAULT_GROUP_KEYBOARD });
                 return ctx.scene.leave();
             }
 
@@ -72,7 +73,7 @@ export const sellTokenForSolWizardGroup = new Scenes.WizardScene<BotContext>(
             });
 
             if (!user) {
-                await ctx.reply("❌ User not found. Please register first.");
+                await ctx.reply("❌ User not found. Please register first.", { ...DEFAULT_GROUP_KEYBOARD });
                 return ctx.scene.leave();
             }
 
@@ -88,7 +89,7 @@ export const sellTokenForSolWizardGroup = new Scenes.WizardScene<BotContext>(
             });
 
             if (!pot) {
-                await ctx.reply("❌ No pot found for this group.");
+                await ctx.reply("❌ No pot found for this group.", { ...DEFAULT_GROUP_KEYBOARD });
                 return ctx.scene.leave();
             }
 
@@ -101,7 +102,7 @@ export const sellTokenForSolWizardGroup = new Scenes.WizardScene<BotContext>(
                     "❌ *Access Denied*\n\n" +
                     "Only the pot admin or designated traders can sell tokens.\n\n" +
                     "_Contact the admin to be assigned as a trader._",
-                    { parse_mode: "Markdown" }
+                    { parse_mode: "Markdown", ...DEFAULT_GROUP_KEYBOARD }
                 );
                 return ctx.scene.leave();
             }
@@ -111,13 +112,24 @@ export const sellTokenForSolWizardGroup = new Scenes.WizardScene<BotContext>(
                 await ctx.reply(
                     "⚠️ *Trade in Progress*\n\n" +
                     "Another trader is currently making a trade.\n\n" +
-                    "_Please wait for them to complete or cancel._"
+                    "_Please wait for them to complete or cancel._",
+                    { ...DEFAULT_GROUP_KEYBOARD }
                 );
                 return ctx.scene.leave();
             }
 
             if (!acquireTradeLock(pot.id, user.id)) {
-                await ctx.reply("❌ Failed to acquire trade lock. Please try again.");
+                await ctx.reply("❌ Failed to acquire trade lock. Please try again.", { ...DEFAULT_GROUP_KEYBOARD });
+                return ctx.scene.leave();
+            }
+
+            // Validate pot data before proceeding
+            if (!pot.admin?.publicKey || !pot.potSeed) {
+                releaseTradeLock(pot.id, user.id);
+                await ctx.reply(
+                    "❌ Pot configuration is incomplete. Please contact the admin.",
+                    { ...DEFAULT_GROUP_KEYBOARD }
+                );
                 return ctx.scene.leave();
             }
 
@@ -129,8 +141,21 @@ export const sellTokenForSolWizardGroup = new Scenes.WizardScene<BotContext>(
             // Get pot vault PDA address to check token accounts
             const { getPotPDA } = await import("../solana/smartContract");
             
-            const adminPubkey = new PublicKey(pot.admin.publicKey);
-            const potSeedPublicKey = new PublicKey(pot.potSeed);
+            let adminPubkey: PublicKey;
+            let potSeedPublicKey: PublicKey;
+            
+            try {
+                adminPubkey = new PublicKey(pot.admin.publicKey);
+                potSeedPublicKey = new PublicKey(pot.potSeed);
+            } catch (error) {
+                releaseTradeLock(pot.id, user.id);
+                await ctx.reply(
+                    "❌ Invalid pot configuration. Please contact the admin.",
+                    { ...DEFAULT_GROUP_KEYBOARD }
+                );
+                return ctx.scene.leave();
+            }
+            
             const [potPda] = getPotPDA(adminPubkey, potSeedPublicKey);
 
             const loadingMsg = await ctx.reply("⏳ Fetching vault tokens...");
@@ -149,7 +174,8 @@ export const sellTokenForSolWizardGroup = new Scenes.WizardScene<BotContext>(
                     (tokenAccounts.length > 0 
                         ? "Only SOL is available, which cannot be sold for SOL.\n\n"
                         : "") +
-                    "Buy some tokens first using the Buy option."
+                    "Buy some tokens first using the Buy option.",
+                    { ...DEFAULT_GROUP_KEYBOARD }
                 );
                 releaseTradeLock(pot.id, user.id);
                 return ctx.scene.leave();
@@ -193,7 +219,7 @@ export const sellTokenForSolWizardGroup = new Scenes.WizardScene<BotContext>(
                 buttons.push(row);
             }
 
-            buttons.push([Markup.button.callback("❌ Cancel Trade", "wizard_cancel_group_sell")]);
+            buttons.push([Markup.button.callback("Cancel", "wizard_cancel_group_sell")]);
 
             await ctx.reply(
                 "🔒 *Trade Lock Acquired*\n\n" +
@@ -210,7 +236,7 @@ export const sellTokenForSolWizardGroup = new Scenes.WizardScene<BotContext>(
             return ctx.wizard.next();
         } catch (error) {
             console.error("Group sell wizard init error:", error);
-            await ctx.reply("❌ Something went wrong. Please try again.");
+            await ctx.reply("❌ Something went wrong. Please try again.", { ...DEFAULT_GROUP_KEYBOARD });
             return ctx.scene.leave();
         }
     },
@@ -272,7 +298,7 @@ export const sellTokenForSolWizardGroup = new Scenes.WizardScene<BotContext>(
             });
 
             if (!user) {
-                await ctx.reply("❌ User not found.");
+                await ctx.reply("❌ User not found.", { ...DEFAULT_GROUP_KEYBOARD });
                 return ctx.scene.leave();
             }
 
@@ -323,7 +349,8 @@ export const sellTokenForSolWizardGroup = new Scenes.WizardScene<BotContext>(
                 `• Insufficient liquidity\n` +
                 `• Token not tradable on Jupiter\n` +
                 `• Network issues\n\n` +
-                `Please try again with a different token or amount.`
+                `Please try again with a different token or amount.`,
+                { ...DEFAULT_GROUP_KEYBOARD }
             );
             
             releaseTradeLock(state.potId, state.userId);
@@ -340,7 +367,7 @@ sellTokenForSolWizardGroup.action(/wsg_token_(\d+)/, async (ctx) => {
     const tokenIndex = parseInt(ctx.match?.[1] || "-1");
 
     if (tokenIndex < 0 || !state.availableTokens || tokenIndex >= state.availableTokens.length) {
-        await ctx.reply("❌ Invalid token selection.");
+        await ctx.reply("❌ Invalid token selection.", { ...DEFAULT_GROUP_KEYBOARD });
         return ctx.scene.leave();
     }
 
@@ -370,7 +397,7 @@ sellTokenForSolWizardGroup.action(/wsg_token_(\d+)/, async (ctx) => {
         const selectedToken = state.availableTokens[tokenIndex];
         
         if (!selectedToken) {
-            await ctx.reply("❌ Token not found.");
+            await ctx.reply("❌ Token not found.", { ...DEFAULT_GROUP_KEYBOARD });
             return ctx.scene.leave();
         }
 
@@ -388,16 +415,14 @@ sellTokenForSolWizardGroup.action(/wsg_token_(\d+)/, async (ctx) => {
             `📊 *How much do you want to sell?*\n\n` +
             `You can enter:\n` +
             `• *Percentage* \\(e\\.g\\., \`50%\` for half\\)\n` +
-            `• *Exact amount* \\(e\\.g\\., \`${escapeMarkdownV2((selectedToken.balance / 2).toFixed(2))}\`\\)`,
+                `• *Exact amount* \\(e\\.g\\., \`${escapeMarkdownV2((selectedToken.balance / 2).toFixed(2))}\`\\)`,
             Markup.inlineKeyboard([
-                [Markup.button.callback("❌ Cancel", "wizard_cancel_group_sell")]
+                [Markup.button.callback("Cancel", "wizard_cancel_group_sell")]
             ])
-        );
-
-        ctx.wizard.selectStep(2);
+        );        ctx.wizard.selectStep(2);
     } catch (error) {
         console.error(error);
-        await ctx.reply("❌ Something went wrong. Please try again.");
+        await ctx.reply("❌ Something went wrong. Please try again.", { ...DEFAULT_GROUP_KEYBOARD });
         return ctx.scene.leave();
     }
 });
@@ -422,17 +447,26 @@ sellTokenForSolWizardGroup.action("wizard_confirm_group_sell", async (ctx) => {
         });
 
         if (!pot) {
-            await ctx.reply("❌ Pot not found.");
+            await ctx.reply("❌ Pot not found.", { ...DEFAULT_GROUP_KEYBOARD });
             return ctx.scene.leave();
         }
 
         const member = pot.members[0];
         if (!member && pot.adminId !== state.userId) {
-            await ctx.reply("❌ Access denied.");
+            await ctx.reply("❌ Access denied.", { ...DEFAULT_GROUP_KEYBOARD });
             return ctx.scene.leave();
         }
 
-        // Get user (trader) details
+        // Get admin user to use admin's private key for setSwapDelegate
+        const adminUser = await prismaClient.user.findUnique({
+            where: { id: pot.adminId }
+        });
+
+        if (!adminUser) {
+            throw new Error("Admin user not found");
+        }
+
+        // Get user (trader) details for the swap transaction
         const user = await prismaClient.user.findUnique({
             where: { id: state.userId }
         });
@@ -452,13 +486,43 @@ sellTokenForSolWizardGroup.action("wizard_confirm_group_sell", async (ctx) => {
         let swapSignature: string | null = null;
 
         try {
-            // Get pot seed for smart contract calls
-            const potSeedPublicKey = new PublicKey(pot.potSeed);
+            // Validate pot configuration
+            if (!pot.admin?.publicKey || !pot.potSeed) {
+                throw new Error("Invalid pot configuration");
+            }
+
+            let potSeedPublicKey: PublicKey;
+            try {
+                potSeedPublicKey = new PublicKey(pot.potSeed);
+            } catch (error) {
+                throw new Error("Invalid pot seed");
+            }
+
+            // If admin is trading, ensure they're added as a trader on-chain
+            const isAdminTrading = state.userId === pot.adminId;
+            if (isAdminTrading) {
+                try {
+                    // Try to add admin as trader if not already added
+                    const { addTraderOnChain } = await import("../solana/smartContract");
+                    await ctx.editMessageText("⏳ Verifying admin trader status...");
+                    await addTraderOnChain(
+                        adminUser.privateKey,
+                        potSeedPublicKey,
+                        adminUser.publicKey
+                    );
+                    console.log("✅ Admin verified/added as trader");
+                } catch (traderError: any) {
+                    // If already a trader, this will fail - that's okay
+                    if (!traderError.message?.includes("already")) {
+                        console.log("Admin might already be a trader:", traderError.message);
+                    }
+                }
+            }
             
-            // Step 1: Set swap delegate
+            // Step 1: Set swap delegate (ADMIN must call this, not trader)
             await ctx.editMessageText("⏳ Step 1/3: Setting swap authorization...");
             await setSwapDelegate(
-                user.privateKey,
+                adminUser.privateKey, // Use ADMIN's private key
                 pot.admin.publicKey,
                 potSeedPublicKey,
                 delegateAmount,
@@ -547,6 +611,8 @@ sellTokenForSolWizardGroup.action("wizard_confirm_group_sell", async (ctx) => {
                 `_Trade recorded in pot ledger\\. Permissions revoked\\._`,
                 {
                     parse_mode: "MarkdownV2",
+                    link_preview_options: { is_disabled: true },
+                    ...DEFAULT_GROUP_KEYBOARD
                 }
             );
 
@@ -558,9 +624,14 @@ sellTokenForSolWizardGroup.action("wizard_confirm_group_sell", async (ctx) => {
             if (delegateSet) {
                 try {
                     await ctx.editMessageText("⏳ Step 3/3: Revoking swap authorization...");
-                    const potSeedPublicKey = new PublicKey(pot.potSeed);
+                    let potSeedPublicKey: PublicKey;
+                    try {
+                        potSeedPublicKey = new PublicKey(pot.potSeed);
+                    } catch (error) {
+                        throw new Error("Invalid pot seed for revoke");
+                    }
                     await revokeSwapDelegate(
-                        user.privateKey,
+                        adminUser.privateKey, // Use ADMIN's private key
                         pot.admin.publicKey,
                         potSeedPublicKey,
                         inputMint
@@ -572,7 +643,7 @@ sellTokenForSolWizardGroup.action("wizard_confirm_group_sell", async (ctx) => {
                         "⚠️ *CRITICAL WARNING*\n\n" +
                         "Trade completed but could not revoke permissions\\.\n" +
                         "Please contact support immediately\\.",
-                        { parse_mode: "MarkdownV2" }
+                        { parse_mode: "MarkdownV2", ...DEFAULT_GROUP_KEYBOARD }
                     );
                 }
             }
@@ -596,7 +667,7 @@ sellTokenForSolWizardGroup.action("wizard_confirm_group_sell", async (ctx) => {
             errorMsg += `_${error.message?.substring(0, 100) || "Network error"}_`;
         }
         
-        await ctx.reply(errorMsg);
+        await ctx.reply(errorMsg, { ...DEFAULT_GROUP_KEYBOARD });
         releaseTradeLock(state.potId, state.userId);
     }
 
@@ -610,7 +681,7 @@ sellTokenForSolWizardGroup.action("wizard_cancel_group_sell", async (ctx) => {
         releaseTradeLock(state.potId, state.userId);
     }
     
-    await ctx.reply("❌ Trade cancelled. Chat is now unlocked.");
+    await ctx.reply("❌ Trade cancelled. Chat is now unlocked.", { ...DEFAULT_GROUP_KEYBOARD });
     await ctx.answerCbQuery("Cancelled");
     return ctx.scene.leave();
 });

@@ -7,6 +7,7 @@ import { decodeSecretKey, escapeMarkdownV2, escapeMarkdownV2Amount } from "../li
 import { getUserTokenAccounts, getTokenMetadata } from "../solana/getTokenAccounts";
 import { executeSwap, getQuote } from "../solana/swapAssetsWithJup";
 import { getConnection } from "../solana/getConnection";
+import { DEFAULT_KEYBOARD } from "../keyboards/keyboards";
 
 const connection = getConnection();
 
@@ -22,7 +23,9 @@ export const sellTokenForSolWizard = new Scenes.WizardScene<BotContext>(
             });
 
             if (!existingUser) {
-                await ctx.reply("❌ User not found. Please register first.");
+                await ctx.reply("❌ User not found. Please register first.", {
+                    ...DEFAULT_KEYBOARD
+                });
                 return ctx.scene.leave();
             }
 
@@ -45,7 +48,10 @@ export const sellTokenForSolWizard = new Scenes.WizardScene<BotContext>(
                     (tokenAccounts.length > 0 
                         ? "Only SOL is available, which cannot be sold for SOL.\n\n"
                         : "") +
-                    "Buy some tokens first using the Buy option."
+                    "Buy some tokens first using the Buy option.",
+                    {
+                        ...DEFAULT_KEYBOARD
+                    }
                 );
                 return ctx.scene.leave();
             }
@@ -81,7 +87,7 @@ export const sellTokenForSolWizard = new Scenes.WizardScene<BotContext>(
                 buttons.push(row);
             }
 
-            buttons.push([Markup.button.callback("❌ Cancel", "wizard_cancel_sell")]);
+            buttons.push([Markup.button.callback("Cancel", "wizard_cancel_sell")]);
 
             await ctx.reply(
                 "🪙 *Select a token to sell:*\n\n" +
@@ -95,7 +101,9 @@ export const sellTokenForSolWizard = new Scenes.WizardScene<BotContext>(
             return ctx.wizard.next();
         } catch (error) {
             console.error(error);
-            await ctx.reply("❌ Something went wrong while fetching your tokens.");
+            await ctx.reply("❌ Something went wrong while fetching your tokens.", {
+                ...DEFAULT_KEYBOARD
+            });
             return ctx.scene.leave();
         }
     },
@@ -147,7 +155,9 @@ export const sellTokenForSolWizard = new Scenes.WizardScene<BotContext>(
             });
 
             if (!user) {
-                await ctx.reply("❌ User not found. Please register again.");
+                await ctx.reply("❌ User not found. Please register again.", {
+                    ...DEFAULT_KEYBOARD
+                });
                 return ctx.scene.leave();
             }
 
@@ -195,7 +205,10 @@ export const sellTokenForSolWizard = new Scenes.WizardScene<BotContext>(
                 `• Insufficient liquidity\n` +
                 `• Token not tradable\n` +
                 `• Network issues\n\n` +
-                `Please try again or choose a different token.`
+                `Please try again or choose a different token.`,
+                {
+                    ...DEFAULT_KEYBOARD
+                }
             );
             return ctx.scene.leave();
         }
@@ -210,7 +223,9 @@ sellTokenForSolWizard.action(/wizard_select_token_(.+)/, async (ctx) => {
     const tokenMint = ctx.match?.[1];
 
     if (!tokenMint) {
-        await ctx.reply("❌ Invalid token selection.");
+        await ctx.reply("❌ Invalid token selection.", {
+            ...DEFAULT_KEYBOARD
+        });
         return ctx.scene.leave();
     }
 
@@ -220,7 +235,9 @@ sellTokenForSolWizard.action(/wizard_select_token_(.+)/, async (ctx) => {
         });
 
         if (!user) {
-            await ctx.reply("❌ User not found.");
+            await ctx.reply("❌ User not found.", {
+                ...DEFAULT_KEYBOARD
+            });
             return ctx.scene.leave();
         }
 
@@ -230,7 +247,9 @@ sellTokenForSolWizard.action(/wizard_select_token_(.+)/, async (ctx) => {
         const selectedToken = tokenAccounts.find(t => t.mintAddress === tokenMint);
 
         if (!selectedToken) {
-            await ctx.reply("❌ Token not found in your wallet.");
+            await ctx.reply("❌ Token not found in your wallet.", {
+                ...DEFAULT_KEYBOARD
+            });
             return ctx.scene.leave();
         }
 
@@ -253,14 +272,16 @@ sellTokenForSolWizard.action(/wizard_select_token_(.+)/, async (ctx) => {
             `• *Percentage* \\(e\\.g\\., \`50%\` for half\\)\n` +
             `• *Exact amount* \\(e\\.g\\., \`${escapeMarkdownV2((selectedToken.uiAmount / 2).toFixed(2))}\`\\)`,
             Markup.inlineKeyboard([
-                [Markup.button.callback("❌ Cancel", "wizard_cancel_sell")]
+                [Markup.button.callback("Cancel", "wizard_cancel_sell")]
             ])
         );
 
         ctx.wizard.selectStep(2);
     } catch (error) {
         console.error(error);
-        await ctx.reply("❌ Something went wrong. Please try again.");
+        await ctx.reply("❌ Something went wrong. Please try again.", {
+            ...DEFAULT_KEYBOARD
+        });
         return ctx.scene.leave();
     }
 });
@@ -276,7 +297,9 @@ sellTokenForSolWizard.action("wizard_confirm_sell", async (ctx) => {
         });
 
         if (!user) {
-            await ctx.reply("❌ User not found.");
+            await ctx.reply("❌ User not found.", {
+                ...DEFAULT_KEYBOARD
+            });
             return ctx.scene.leave();
         }
 
@@ -313,6 +336,8 @@ sellTokenForSolWizard.action("wizard_confirm_sell", async (ctx) => {
                 `_Transaction confirmed\\!_`,
                 {
                     parse_mode: "MarkdownV2",
+                    link_preview_options: { is_disabled: true },
+                    ...DEFAULT_KEYBOARD
                 }
             );
         } catch (error: any) {
@@ -332,18 +357,24 @@ sellTokenForSolWizard.action("wizard_confirm_sell", async (ctx) => {
                 errorMsg += `_${escapeMarkdownV2(error.message?.substring(0, 100) || "Network error")}_`;
             }
             
-            await ctx.replyWithMarkdownV2(errorMsg);
+            await ctx.replyWithMarkdownV2(errorMsg, {
+                ...DEFAULT_KEYBOARD
+            });
         }
     } catch (error) {
         console.error(error);
-        await ctx.reply("⚠️ Something went wrong while processing the swap.");
+        await ctx.reply("⚠️ Something went wrong while processing the swap.", {
+            ...DEFAULT_KEYBOARD
+        });
     }
 
     return ctx.scene.leave();
 });
 
 sellTokenForSolWizard.action("wizard_cancel_sell", async (ctx) => {
-    await ctx.reply("❌ Sell cancelled.");
+    await ctx.reply("❌ Sell cancelled.", {
+        ...DEFAULT_KEYBOARD
+    });
     await ctx.answerCbQuery("Cancelled");
     return ctx.scene.leave();
 });
