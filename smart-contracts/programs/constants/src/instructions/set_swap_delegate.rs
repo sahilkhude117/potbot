@@ -17,9 +17,11 @@ pub fn handler(ctx: Context<SetSwapDelegate>, amount: u64) -> Result<()> {
 
     // define pda signer seeds to sign the CPI
     let admin_key = pot.admin.key();
+    let pot_seed_key = ctx.accounts.pot_seed.key();
     let seeds = &[
         POT_SEED.as_ref(),
         admin_key.as_ref(),
+        pot_seed_key.as_ref(),
         &[pot.bump],
     ];
     let signer_seeds = &[&seeds[..]];
@@ -44,7 +46,7 @@ pub struct SetSwapDelegate<'info> {
 
     #[account(
         mut,
-        seeds = [POT_SEED, admin.key().as_ref()],
+        seeds = [POT_SEED, admin.key().as_ref(), pot_seed.key().as_ref()],
         bump = pot.bump
     )]
     pub pot: Account<'info, Pot>,
@@ -52,10 +54,10 @@ pub struct SetSwapDelegate<'info> {
     // check: admin is used for pda seed derivation and is not written to
     pub admin: AccountInfo<'info>,
 
+    pub pot_seed: AccountInfo<'info>,
+
     #[account(
         mut,
-        // This constraint ensures the token account is owned by the pot,
-        // allowing any of the pot's assets to be delegated.
         token::authority = pot,
     )]
     pub pot_vault: Account<'info, TokenAccount>,

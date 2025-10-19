@@ -11,21 +11,26 @@ pub fn handler(ctx: Context<InitializePot>, fees: PotFees, base_mint: Pubkey) ->
     pot.base_mint = base_mint;
     pot.total_shares = 0;
 
+    pot.pot_seed = ctx.accounts.pot_seed.key();
+
     pot.bump = ctx.bumps.pot;
     
     Ok(())
 }
 
 #[derive(Accounts)]
+#[instruction(fees: PotFees, base_mint: Pubkey)]
 pub struct InitializePot<'info> {
     #[account(
         init,
         payer = admin,
         space = Pot::SPACE,
-        seeds = [POT_SEED, admin.key().as_ref()],
+        seeds = [POT_SEED, admin.key().as_ref(), pot_seed.key().as_ref()],
         bump
     )]
     pub pot: Account<'info, Pot>,
+
+    pub pot_seed: AccountInfo<'info>,
 
     #[account(mut)]
     pub admin: Signer<'info>,

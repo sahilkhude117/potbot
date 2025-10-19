@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
-use crate::constants::MEMBER_SEED;
+use crate::constants::{MEMBER_SEED, POT_SEED};
 use crate::errors::PotError;
 use crate::states::{MemberData, Pot};
 
@@ -48,6 +48,17 @@ pub struct Deposit<'info> {
     #[account(mut)]
     pub user: Signer<'info>,
 
+    pub admin: AccountInfo<'info>,
+    pub pot_seed: AccountInfo<'info>,
+
+    #[account(
+        mut,
+        seeds = [POT_SEED, admin.key().as_ref(), pot_seed.key().as_ref()],
+        bump = pot.bump,
+        has_one = base_mint
+    )]
+    pub pot: Account<'info, Pot>,
+
     #[account(
         init_if_needed,
         payer = user,
@@ -57,23 +68,12 @@ pub struct Deposit<'info> {
     )]
     pub member_data: Account<'info, MemberData>,
 
-    #[account(mut, has_one = base_mint)]
-    pub pot: Account<'info, Pot>,
-
     pub base_mint: Account<'info, Mint>,
 
-    #[account(
-        mut,
-        associated_token::mint = base_mint,
-        associated_token::authority = pot
-    )]
+    #[account(mut, associated_token::mint = base_mint, associated_token::authority = pot)]
     pub pot_vault: Account<'info, TokenAccount>,
 
-    #[account(
-        mut,
-        associated_token::mint = base_mint,
-        associated_token::authority = user
-    )]
+    #[account(mut, associated_token::mint = base_mint, associated_token::authority = user)]
     pub user_vault: Account<'info, TokenAccount>,
 
     pub token_program: Program<'info, Token>,

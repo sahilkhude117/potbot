@@ -21,10 +21,11 @@ pub fn handler(ctx: Context<Redeem>, shares_to_burn: u64) -> Result<()> {
     pot.total_shares = pot.total_shares.checked_sub(shares_to_burn).ok_or(PotError::CalculationOverflow)?;
     member_data.shares = member_data.shares.checked_sub(shares_to_burn).ok_or(PotError::CalculationOverflow)?;
 
-    let admin_key = pot.admin.key();
+    let pot_seed_key = ctx.accounts.pot_seed.key(); // Get the pot_seed key
     let seeds = &[
         POT_SEED.as_ref(),
-        admin_key.as_ref(),
+        pot.admin.as_ref(), 
+        pot_seed_key.as_ref(),
         &[pot.bump],
     ];
     let signer = &[&seeds[..]];
@@ -46,23 +47,25 @@ pub struct Redeem<'info> {
     #[account(mut)]
     pub user: Signer<'info>,
 
+    pub admin: AccountInfo<'info>,
+    pub pot_seed: AccountInfo<'info>,
+
+    #[account(
+        mut,
+        seeds = [POT_SEED, admin.key().as_ref(), pot_seed.key().as_ref()],
+        bump = pot.bump
+    )]
+    pub pot: Account<'info, Pot>,
+
     #[account(
         mut,
         seeds = [MEMBER_SEED, pot.key().as_ref(), user.key().as_ref()],
         bump = member_data.bump,
         has_one = user,
-        has_one = pot,
+        has_one = pot
     )]
     pub member_data: Account<'info, MemberData>,
 
-    #[account(
-        mut,
-        seeds = [POT_SEED, admin.key().as_ref()],
-        bump = pot.bump
-    )]
-    pub pot: Account<'info, Pot>,
-
-    pub admin: AccountInfo<'info>,
     #[account(
         mut,
         associated_token::mint = pot.base_mint,

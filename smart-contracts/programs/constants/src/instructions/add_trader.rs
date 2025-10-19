@@ -1,5 +1,5 @@
 use anchor_lang::prelude::*;
-use crate::constants::MAX_TRADERS;
+use crate::constants::{POT_SEED, MAX_TRADERS};
 use crate::errors::PotError;
 use crate::states::Pot;
 
@@ -23,8 +23,13 @@ pub fn handler(ctx: Context<AddTrader>, trader_to_add: Pubkey) -> Result<()> {
 pub struct AddTrader<'info> {
     #[account(
         mut,
+        seeds = [POT_SEED, admin.key().as_ref(), pot_seed.key().as_ref()],
+        bump = pot.bump,
         has_one = admin @ PotError::Unauthorized
     )]
     pub pot: Account<'info, Pot>,
+    
+    pub pot_seed: AccountInfo<'info>,
+    
     pub admin: Signer<'info>,
 }
