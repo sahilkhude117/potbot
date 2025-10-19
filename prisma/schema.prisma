@@ -27,6 +27,7 @@ model Pot {
   telegramGroupId  String     @unique
   inviteLink       String?
   vaultAddress     String     @unique
+  potSeed          String     @unique
 
   isGroupAdded     Boolean    @default(false)
 
