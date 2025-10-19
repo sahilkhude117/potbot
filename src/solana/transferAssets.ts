@@ -1,8 +1,9 @@
-import { Connection, Keypair, PublicKey, SystemProgram, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
+import { Keypair, PublicKey, SystemProgram, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
 import { SOL_MINT } from "../lib/statits";
 import { createAssociatedTokenAccountInstruction, createTransferInstruction, getAccount, getAssociatedTokenAddress, TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import { getConnection } from "./getConnection";
 
-const connection = new Connection(process.env.RPC_URL!, 'confirmed');
+const connection = getConnection();
 
 async function getTokenProgramId(mintAddress: PublicKey): Promise<PublicKey> {
   // Fetch mint account info to determine owner program id

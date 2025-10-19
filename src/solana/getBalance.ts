@@ -1,6 +1,7 @@
-import { Keypair, Connection, PublicKey, LAMPORTS_PER_SOL } from "@solana/web3.js";
+import { PublicKey, LAMPORTS_PER_SOL } from "@solana/web3.js";
+import { getConnection } from "./getConnection";
 
-const connection = new Connection(process.env.RPC_URL!);
+const connection = getConnection();
 
 export async function getBalanceMessage(publicKey: string): Promise<{
     empty: boolean,

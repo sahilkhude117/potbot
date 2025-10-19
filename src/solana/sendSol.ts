@@ -1,6 +1,7 @@
-import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey, SystemProgram, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
+import { Keypair, LAMPORTS_PER_SOL, PublicKey, SystemProgram, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
+import { getConnection } from "./getConnection";
 
-const connection = new Connection(process.env.RPC_URL!, 'confirmed');
+const connection = getConnection();
 
 export async function sendSol(
     fromKeypair: Keypair, 

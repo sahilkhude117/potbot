@@ -1,4 +1,3 @@
-import bs58 from 'bs58';
 
 export function escapeMarkdownV2(text: string): string {
   return text.replace(/([_*\[\]()~`>#+\-=|{}.!\\])/g, '\\$1');

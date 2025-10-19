@@ -1,13 +1,14 @@
 import { Markup, Scenes } from "telegraf";
 import type { BotContext, BuyTokenWizardState } from "../lib/types";
 import { prismaClient } from "../db/prisma";
-import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey, VersionedTransaction } from "@solana/web3.js";
+import { Keypair, LAMPORTS_PER_SOL, PublicKey, VersionedTransaction } from "@solana/web3.js";
 import { SOL_MINT } from "../lib/statits";
 import { decodeSecretKey, escapeMarkdownV2, escapeMarkdownV2Amount } from "../lib/utils";
 import { getBalanceMessage } from "../solana/getBalance";
 import { executeSwap, getQuote, swap } from "../solana/swapAssetsWithJup";
+import { getConnection } from "../solana/getConnection";
 
-const connection = new Connection(process.env.MAINNET_RPC_URL!, 'confirmed');
+const connection = getConnection();
 
 export const buyTokenWithSolWizard = new Scenes.WizardScene<BotContext>(
     'buy_token_with_sol_wizard',

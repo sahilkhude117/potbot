@@ -2,7 +2,6 @@ import { Connection, PublicKey } from "@solana/web3.js";
 import { getMint } from "@solana/spl-token";
 import { SOL_DECIMALS, SOL_MINT } from "../lib/statits";
 
-
 const decimalsCache = new Map<string, number>();
 
 export async function getTokenDecimals(mintAddress: string): Promise<number> {

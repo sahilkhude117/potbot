@@ -1,14 +1,14 @@
 import { Markup, Scenes } from "telegraf";
 import type { BotContext, SellTokenGroupWizardState } from "../lib/types";
 import { prismaClient } from "../db/prisma";
-import { Connection, Keypair, LAMPORTS_PER_SOL, VersionedTransaction, PublicKey } from "@solana/web3.js";
+import { Keypair, LAMPORTS_PER_SOL, VersionedTransaction, PublicKey } from "@solana/web3.js";
 import { SOL_MINT } from "../lib/statits";
 import { decodeSecretKey, escapeMarkdownV2, escapeMarkdownV2Amount } from "../lib/utils";
 import { getUserTokenAccounts, getTokenMetadata } from "../solana/getTokenAccounts";
 import { executeSwap, getQuote } from "../solana/swapAssetsWithJup";
+import { getConnection } from "../solana/getConnection";
 
-// const connection = new Connection(process.env.MAINNET_RPC_URL!, "confirmed");
-const connection = new Connection(process.env.RPC_URL!, "confirmed");
+const connection = getConnection();
 
 const tradeLocks = new Map<string, { userId: string, timestamp: number }>();
 const LOCK_TIMEOUT = 5 * 60 * 1000;

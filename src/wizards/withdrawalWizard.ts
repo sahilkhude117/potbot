@@ -5,7 +5,12 @@ import type { BotContext, WithdrawalWizardState } from "../lib/types";
 import { escapeMarkdownV2, escapeMarkdownV2Amount } from "../lib/utils";
 import { getUserPosition } from "../solana/getUserPosition";
 import { CHECK_BALANCE_KEYBOARD } from "../keyboards/keyboards";
+import { PublicKey } from "@solana/web3.js";
+import { getPotPDA } from "../solana/smartContract";
+import { getAccount, getAssociatedTokenAddress } from "@solana/spl-token";
+import { getConnection } from "../solana/getConnection";
 
+const connection = getConnection();
 
 export const withdrawFromVaultWizard = new Scenes.WizardScene<BotContext>(
     "withdraw_from_vault_wizard",
@@ -251,12 +256,7 @@ withdrawFromVaultWizard.action("wizard_confirm_withdrawal", async (ctx) => {
         }
 
         // Check liquid SOL balance on-chain before proceeding
-        const { Connection } = await import("@solana/web3.js");
-        const { PublicKey } = await import("@solana/web3.js");
-        const { getAssociatedTokenAddress, getAccount } = await import("@solana/spl-token");
-        const { getPotPDA } = await import("../solana/smartContract");
-        
-        const connection = new Connection(process.env.RPC_URL!, "confirmed");
+       
         const adminPubkey = new PublicKey(pot.admin.publicKey);
         const [potPda] = getPotPDA(adminPubkey);
         
