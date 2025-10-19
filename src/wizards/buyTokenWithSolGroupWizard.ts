@@ -127,7 +127,8 @@ export const buyTokenWithSolWizardGroup = new Scenes.WizardScene<BotContext>(
             const { getAssociatedTokenAddress, getAccount } = await import("@solana/spl-token");
             
             const adminPubkey = new PublicKey(pot.admin.publicKey);
-            const [potPda] = getPotPDA(adminPubkey);
+            const potSeedPublicKey = new PublicKey(pot.potSeed);
+            const [potPda] = getPotPDA(adminPubkey, potSeedPublicKey);
             const solMint = new PublicKey(SOL_MINT);
             
             const potVaultAta = await getAssociatedTokenAddress(
@@ -386,11 +387,15 @@ buyTokenWithSolWizardGroup.action("wizard_confirm_group_buy", async (ctx) => {
         let swapSignature: string | null = null;
 
         try {
+            // Get pot seed for smart contract calls
+            const potSeedPublicKey = new PublicKey(pot.potSeed);
+            
             // Step 1: Set swap delegate
             await ctx.editMessageText("⏳ Step 1/3: Setting swap authorization...");
             await setSwapDelegate(
                 user.privateKey,
                 pot.admin.publicKey,
+                potSeedPublicKey,
                 delegateAmount,
                 inputMint
             );
@@ -491,9 +496,11 @@ buyTokenWithSolWizardGroup.action("wizard_confirm_group_buy", async (ctx) => {
             if (delegateSet) {
                 try {
                     await ctx.editMessageText("⏳ Step 3/3: Revoking swap authorization...");
+                    const potSeedPublicKey = new PublicKey(pot.potSeed);
                     await revokeSwapDelegate(
                         user.privateKey,
                         pot.admin.publicKey,
+                        potSeedPublicKey,
                         inputMint
                     );
                     console.log("✅ Delegate revoked successfully");

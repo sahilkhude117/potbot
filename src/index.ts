@@ -1,7 +1,7 @@
 import { Markup, Scenes, session, Telegraf } from "telegraf";
 import { prismaClient } from "./db/prisma";
 import { ADD_POTBOT_TO_GROUP, CREATE_INVITE_DONE_KEYBOARD, CREATE_NEW_POT, DEFAULT_GROUP_KEYBOARD, DEFAULT_KEYBOARD, SOLANA_POT_BOT, SOLANA_POT_BOT_WITH_START_KEYBOARD } from "./keyboards/keyboards";
-import { Keypair, LAMPORTS_PER_SOL, VersionedTransaction}  from "@solana/web3.js";
+import { Keypair, LAMPORTS_PER_SOL, VersionedTransaction, PublicKey}  from "@solana/web3.js";
 import { getBalanceMessage } from "./solana/getBalance";
 import { escapeMarkdownV2, escapeMarkdownV2Amount } from "./lib/utils";
 import { depositSolToVaultWizard } from "./wizards/depositWizard";
@@ -123,21 +123,8 @@ bot.start(async (ctx) => {
           const publicKey = existingUser.publicKey;
           const { empty, message } = await getBalanceMessage(existingUser.publicKey.toString());
 
-          let welcomeMessage = `*🎉 Welcome to Pot Bot\\!*\n\n`;
-          welcomeMessage += `*Your Wallet Address:*\n`;
-          welcomeMessage += `\`${escapeMarkdownV2(publicKey)}\`\n\n`;
-          
-          if (empty) {
-            welcomeMessage += `*💰 Balance:*\n`;
-            welcomeMessage += `Your wallet is currently empty\\.\n\n`;
-            welcomeMessage += `_Please fund your wallet with SOL to start trading\\._`;
-          } else {
-            welcomeMessage += `*💰 Balance:*\n`;
-            welcomeMessage += `${escapeMarkdownV2(message)}\n\n`;
-            welcomeMessage += `_You're all set to trade on Solana\\!_`;
-          }
-
-          ctx.replyWithMarkdownV2(welcomeMessage, {
+          ctx.reply(`Welcome to the Pot Bot. Here is your public key ${publicKey} 
+            ${empty ? "Your wallet is empty please fund it to trade on SOL": message}`, {
               ...DEFAULT_KEYBOARD
           })
       } else {
@@ -150,15 +137,8 @@ bot.start(async (ctx) => {
             }
         })
         const publicKey = keypair.publicKey.toString();
-        
-        let welcomeMessage = `*🎉 Welcome to Pot Bot\\!*\n\n`;
-        welcomeMessage += `*Your Wallet Address:*\n`;
-        welcomeMessage += `\`${escapeMarkdownV2(publicKey)}\`\n\n`;
-        welcomeMessage += `*💰 Balance:*\n`;
-        welcomeMessage += `Your wallet is currently empty\\.\n\n`;
-        welcomeMessage += `_Please fund your wallet with SOL to start trading\\._`;
-
-        ctx.replyWithMarkdownV2(welcomeMessage, {
+        ctx.reply(`Welcome to the Pot Bot. Here is your public key ${publicKey} 
+        You can trade on solana now. Put some SOL to trade.`, {
             ...DEFAULT_KEYBOARD
         })
       }
@@ -200,15 +180,8 @@ async function showPersonalPortfolio(ctx: any) {
       }
     });
     const publicKey = keypair.publicKey.toString();
-    
-    let welcomeMessage = `*🎉 Welcome to Pot Bot\\!*\n\n`;
-    welcomeMessage += `*Your Wallet Address:*\n`;
-    welcomeMessage += `\`${escapeMarkdownV2(publicKey)}\`\n\n`;
-    welcomeMessage += `*💰 Balance:*\n`;
-    welcomeMessage += `Your wallet is currently empty\\.\n\n`;
-    welcomeMessage += `_Please fund your wallet with SOL to start trading\\._`;
-
-    await ctx.replyWithMarkdownV2(welcomeMessage, {
+    await ctx.reply(`Welcome to the Pot Bot. Here is your public key ${publicKey} 
+    You can trade on solana now. Put some SOL to trade.`, {
       ...DEFAULT_KEYBOARD
     });
     return;
@@ -218,7 +191,8 @@ async function showPersonalPortfolio(ctx: any) {
     where: {
       userId: existingUser?.id
     },
-    include: {
+    include:
+     {
       pot: {
         include: {
           assets: true
@@ -323,18 +297,18 @@ async function showPersonalPortfolio(ctx: any) {
     potDetails.sort((a, b) => b.pnlPercentage - a.pnlPercentage);
 
     let message = `*📊 Your Personal Portfolio*\n\n`;
-    message += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
+    message += `\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\n\n`;
 
-    message += `*💎 Key Metrics*\n\n`;
-    message += `*Total Deposited:*\n\`\\$${escapeMarkdownV2Amount(totalDepositedUSD)}\`\n\n`;
-    message += `*Total Withdrawn:*\n\`\\$${escapeMarkdownV2Amount(totalWithdrawnUSD)}\`\n\n`;
-    message += `*Current Holdings:*\n\`\\$${escapeMarkdownV2Amount(totalCurrentValueUSD)}\`\n\n`;
-    message += `*Total Value:*\n\`\\$${escapeMarkdownV2Amount(totalCurrentValueUSD + totalWithdrawnUSD)}\`\n\n`;
-    message += `*All\\-Time P&L:*\n${pnlSign}\`\\$${escapeMarkdownV2Amount(Math.abs(totalPnL))}\` \\(${pnlSign}\`${escapeMarkdownV2Amount(Math.abs(totalPnLPercentage))}%\`\\) ${pnlEmoji}\n\n`;
+    message += `*Key Metrics*\n\n`;
+    message += `*Total Deposited:* \\$${escapeMarkdownV2Amount(totalDepositedUSD)}\n`;
+    message += `*Total Withdrawn:* \\$${escapeMarkdownV2Amount(totalWithdrawnUSD)}\n`;
+    message += `*Current Holdings:* \\$${escapeMarkdownV2Amount(totalCurrentValueUSD)}\n`;
+    message += `*Total Value:* \\$${escapeMarkdownV2Amount(totalCurrentValueUSD + totalWithdrawnUSD)}\n`;
+    message += `*All\\-Time P&L:* ${pnlSign}\\$${escapeMarkdownV2Amount(Math.abs(totalPnL))} \\(${pnlSign}${escapeMarkdownV2Amount(Math.abs(totalPnLPercentage))}%\\) ${pnlEmoji}\n\n`;
     
-    message += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
+    message += `\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\n\n`;
     
-    message += `*💼 Your Pots Breakdown* \\(${potDetails.length}\\)\n\n`;
+    message += `*💼 Your Pots Breakdown*\n\n`;
 
     for (let i = 0; i < potDetails.length; i++) {
         const pot = potDetails[i];
@@ -343,47 +317,45 @@ async function showPersonalPortfolio(ctx: any) {
         const potPnlSign = pot.pnl >= 0 ? "\\+" : "\\-";
         const statusEmoji = pot.isActive ? "📈" : "📤"; 
         
-        message += `${statusEmoji} *${escapeMarkdownV2(pot.name)}* ${potPnlEmoji}\n`;
-        message += `┣ Deposited: \`\\$${escapeMarkdownV2Amount(pot.depositedUSD)}\`\n`;
+        message += `${statusEmoji} *${escapeMarkdownV2(pot.name)}*\n`;
+        message += `> Deposited: \\$${escapeMarkdownV2Amount(pot.depositedUSD)}\n`;
         if (pot.withdrawnUSD > 0) {
-            message += `┣ Withdrawn: \`\\$${escapeMarkdownV2Amount(pot.withdrawnUSD)}\`\n`;
+            message += `> Withdrawn: \\$${escapeMarkdownV2Amount(pot.withdrawnUSD)}\n`;
         }
-        message += `┣ Current: \`\\$${escapeMarkdownV2Amount(pot.currentValueUSD)}\`\n`;
+        message += `> Current Value: \\$${escapeMarkdownV2Amount(pot.currentValueUSD)}\n`;
         if (pot.isActive) {
-            message += `┣ Share: \`${escapeMarkdownV2(pot.sharePercentage.toFixed(2))}%\`\n`;
+            message += `> Your Share: ${escapeMarkdownV2(pot.sharePercentage.toFixed(2))}%\n`;
         }
-        message += `┗ P&L: ${potPnlSign}\`\\$${escapeMarkdownV2Amount(Math.abs(pot.pnl))}\` \\(${potPnlSign}\`${escapeMarkdownV2Amount(Math.abs(pot.pnlPercentage))}%\`\\)\n`;
+        message += `> P&L: ${potPnlSign}\\$${escapeMarkdownV2Amount(Math.abs(pot.pnl))} \\(${potPnlSign}${escapeMarkdownV2Amount(Math.abs(pot.pnlPercentage))}%\\) ${potPnlEmoji}\n`;
         
         if (i < potDetails.length - 1) {
             message += `\n`;
         }
     }
 
-    message += `\n━━━━━━━━━━━━━━━━━━━━━\n\n`;
+    message += `\n\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\n\n`;
     
-    message += `*📈 Portfolio Statistics*\n\n`;
+    message += `*Portfolio Statistics*\n\n`;
     const totalPots = potDetails.length;
     const activePots = potDetails.filter(p => p.isActive).length;
     const profitablePots = potDetails.filter(p => p.pnl > 0).length;
-    message += `*Active Pots:* \`${activePots}\` / \`${totalPots}\`\n`;
-    message += `*Profitable:* \`${profitablePots}\` / \`${totalPots}\`\n`;
+    message += `*Pots:* ${totalPots} total \\(${activePots} active\\)\n`;
+    message += `*Profitable Pots:* ${profitablePots} / ${totalPots}\n`;
     if (activePots > 0) {
         const avgActivePotSize = totalCurrentValueUSD / activePots;
-        message += `*Avg Pot Value:* \`\\$${escapeMarkdownV2Amount(avgActivePotSize)}\`\n`;
+        message += `*Avg Pot Value:* \\$${escapeMarkdownV2Amount(avgActivePotSize)}\n`;
     }
     
     if (potDetails.length > 0) {
         const bestPot = potDetails[0];
         if (bestPot && bestPot.pnlPercentage > 0) {
-            message += `*Best Performer:* ${escapeMarkdownV2(bestPot.name)}\n  \\+\`${escapeMarkdownV2Amount(bestPot.pnlPercentage)}%\` 🏆\n`;
+            message += `*Best Performer:* ${escapeMarkdownV2(bestPot.name)} \\(\\+${escapeMarkdownV2Amount(bestPot.pnlPercentage)}%\\)\n`;
         }
     }
     
     message += `\n_Last updated: ${escapeMarkdownV2(new Date().toLocaleString())}_`;
 
-  await ctx.replyWithMarkdownV2(message, {
-    ...DEFAULT_KEYBOARD
-  });
+  await ctx.replyWithMarkdownV2(message);
 }
 
 async function showGroupPortfolio(ctx: any) {
@@ -441,13 +413,8 @@ async function showGroupPortfolio(ctx: any) {
     return bValue - aValue;
   });
 
-  const nonZeroAssets = sortedAssets.filter(asset => asset.balance !== BigInt(0));
-  
-  for (let i = 0; i < nonZeroAssets.length; i++) {
-    const asset = nonZeroAssets[i];
-    if (!asset) continue;
-    
-    const isLast = i === nonZeroAssets.length - 1;
+  for (const asset of sortedAssets) {
+    if (asset.balance === BigInt(0)) continue;
 
     const decimals = await getTokenDecimalsWithCache(asset.mintAddress);
     const balanceReadable = Number(asset.balance) / (10 ** decimals);
@@ -469,9 +436,9 @@ async function showGroupPortfolio(ctx: any) {
       emoji = "🎯";
     }
 
-    assetAllocation += `\n${emoji} *${escapeMarkdownV2(symbol)}* \\(\`${escapeMarkdownV2Amount(percentage)}%\`\\)\n`;
-    assetAllocation += `┣ Balance: \`${escapeMarkdownV2Amount(balanceReadable)}\`\n`;
-    assetAllocation += `${isLast ? '┗' : '┗'} Value: \`\\$${escapeMarkdownV2Amount(valueUSD)}\`\n`;
+    assetAllocation += `\n${emoji} *${escapeMarkdownV2(symbol)}:*\n`;
+    assetAllocation += `> Balance: \`${escapeMarkdownV2Amount(balanceReadable)}\`\n`;
+    assetAllocation += `> Value: \\$${escapeMarkdownV2Amount(valueUSD)} \\(${escapeMarkdownV2Amount(percentage)}%\\)\n`;
   }
 
   const navPerShareUSD = pot.totalShares > BigInt(0) 
@@ -490,62 +457,31 @@ async function showGroupPortfolio(ctx: any) {
   const hasUntrackedDeposits = actualSOLBalance > (trackedNetSOL * 1.01); // 1% tolerance
 
   let message = `*📈 Group Portfolio: ${escapeMarkdownV2(pot.name || "Unnamed Pot")}*\n\n`;
+  message += `\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\n\n`;
   
-  message += `*💎 Key Metrics*\n\n`;
-  message += `*Total Value Locked \\(TVL\\):*\n\`\\$${escapeMarkdownV2Amount(potValueUSD)}\`\n\n`;
-  message += `*All\\-Time PnL:*\n${pnlSign}\`\\$${escapeMarkdownV2Amount(Math.abs(allTimePnLUSD))}\` \\(${pnlSign}\`${escapeMarkdownV2Amount(Math.abs(allTimePnLPercentage))}%\`\\) ${pnlEmoji}\n\n`;
-  message += `*Tracked Deposits:*\n\`\\$${escapeMarkdownV2Amount(totalDepositsUSD)}\`\n\n`;
-  message += `*Tracked Withdrawals:*\n\`\\$${escapeMarkdownV2Amount(totalWithdrawalsUSD)}\`\n\n`;
+  message += `*Key Metrics*\n\n`;
+  message += `*Total Value Locked \\(TVL\\):* \\$${escapeMarkdownV2Amount(potValueUSD)}\n`;
+  message += `*All\\-Time PnL:* ${pnlSign}\\$${escapeMarkdownV2Amount(Math.abs(allTimePnLUSD))} \\(${pnlSign}${escapeMarkdownV2Amount(Math.abs(allTimePnLPercentage))}%\\) ${pnlEmoji}\n`;
+  message += `*Tracked Deposits:* \\$${escapeMarkdownV2Amount(totalDepositsUSD)}\n`;
+  message += `*Tracked Withdrawals:* \\$${escapeMarkdownV2Amount(totalWithdrawalsUSD)}\n`;
   
   if (hasUntrackedDeposits) {
-    message += `_ℹ️ Note: Current balance suggests additional deposits made outside bot \\(e\\.g\\. via Phantom\\)\\. PnL may be higher than actual\\._\n\n`;
+    message += `\n_ℹ️ Note: Current balance suggests additional deposits made outside bot \\(e\\.g\\. via Phantom\\)\\. PnL may be higher than actual\\._\n`;
   }
+  message += `\n`;
   
-  message += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
-  message += `*🪙 Asset Allocation*\n`;
+  message += `\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\n\n`;
+  message += `*Asset Allocation*`;
   message += assetAllocation;
   
-  message += `\n\n━━━━━━━━━━━━━━━━━━━━━\n\n`;
-  message += `*📊 Pot Statistics*\n\n`;
-  message += `*Members:* \`${pot.members.length}\`\n\n`;
-  message += `*Total Shares Issued:*\n\`${escapeMarkdownV2Amount(Number(pot.totalShares))}\`\n\n`;
-  message += `*Net Asset Value \\(NAV\\) per Share:*\n\`\\$${escapeMarkdownV2Amount(navPerShareUSD)}\`\n\n`;
-  message += `*Inception Date:*\n\`${escapeMarkdownV2(inceptionDate)}\`\n`;
+  message += `\n\n\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\n\n`;
+  message += `*Pot Statistics*\n\n`;
+  message += `*Members:* \`${pot.members.length}\`\n`;
+  message += `*Total Shares Issued:* \`${escapeMarkdownV2Amount(Number(pot.totalShares))}\`\n`;
+  message += `*Net Asset Value \\(NAV\\) per Share:* \\$${escapeMarkdownV2Amount(navPerShareUSD)}\n`;
+  message += `*Inception Date:* \`${escapeMarkdownV2(inceptionDate)}\`\n`;
 
-  // Try to get and delete old pinned portfolio message from the bot
-  try {
-    const chat = await ctx.telegram.getChat(ctx.chat.id);
-    if (chat.pinned_message) {
-      const pinnedMessage = chat.pinned_message;
-      // Check if the pinned message is from the bot and contains "Group Portfolio"
-      if (pinnedMessage.from?.id === ctx.botInfo.id && 
-          pinnedMessage.text?.includes("Group Portfolio")) {
-        try {
-          await ctx.telegram.unpinChatMessage(ctx.chat.id, pinnedMessage.message_id);
-          await ctx.telegram.deleteMessage(ctx.chat.id, pinnedMessage.message_id);
-        } catch (error) {
-          console.log("Could not delete/unpin old portfolio message:", error);
-        }
-      }
-    }
-  } catch (error) {
-    console.log("Could not get chat info:", error);
-  }
-
-  // Send new portfolio message
-  const sentMessage = await ctx.replyWithMarkdownV2(message, {
-    ...DEFAULT_GROUP_KEYBOARD
-  });
-
-  // Pin the new message
-  try {
-    await ctx.telegram.pinChatMessage(ctx.chat.id, sentMessage.message_id, {
-      disable_notification: true // Don't notify all members
-    });
-  } catch (error) {
-    console.error("Failed to pin portfolio message:", error);
-    await ctx.reply("⚠️ Could not pin the portfolio message. Please make sure I have admin rights with 'Pin Messages' permission.");
-  }
+  await ctx.replyWithMarkdownV2(message);
 }
 
 bot.command("portfolio", handlePortfolio);
@@ -582,21 +518,11 @@ bot.action("public_key", async ctx => {
     if (existingUser) {
       const {empty, message} = await getBalanceMessage(existingUser.publicKey.toString());
 
-      let keyMessage = `*🔑 Your Wallet Address:*\n`;
-      keyMessage += `\`${escapeMarkdownV2(existingUser?.publicKey)}\`\n\n`;
-      
-      if (empty) {
-        keyMessage += `*💰 Balance:*\n`;
-        keyMessage += `Your wallet is currently empty\\.\n\n`;
-        keyMessage += `_Please fund your wallet with SOL to start trading\\._`;
-      } else {
-        keyMessage += `*💰 Balance:*\n`;
-        keyMessage += `${escapeMarkdownV2(message)}`;
-      }
-
-      return ctx.replyWithMarkdownV2(keyMessage, {
-          ...DEFAULT_KEYBOARD
-      });
+      return ctx.reply(
+        `Your public key is ${existingUser?.publicKey} ${empty ? "Fund your wallet to trade" : message}`, {
+            ...DEFAULT_KEYBOARD
+          }   
+      );
     } else {
       return ctx.reply(`Sorry! We are unable to find your publicKey`); 
     }
@@ -609,33 +535,12 @@ bot.action("private_key", async ctx => {
       }
   })
 
-  if (user) {
-    let privateKeyMessage = `*🔐 Your Private Key*\n\n`;
-    privateKeyMessage += `⚠️ *KEEP THIS SECRET\\!*\n\n`;
-    privateKeyMessage += `\`${escapeMarkdownV2(user.privateKey)}\`\n\n`;
-    privateKeyMessage += `*🚨 Security Warning:*\n`;
-    privateKeyMessage += `• Never share this with anyone\n`;
-    privateKeyMessage += `• Anyone with this key can access your funds\n`;
-    privateKeyMessage += `• This message will auto\\-delete in 1 minute\n\n`;
-    privateKeyMessage += `_Save it securely now\\!_`;
-
-    const sentMessage = await ctx.replyWithMarkdownV2(privateKeyMessage, {
-      ...DEFAULT_KEYBOARD
-    });
-
-    // Delete the message after 1 minute (60000 milliseconds)
-    setTimeout(async () => {
-      try {
-        await ctx.deleteMessage(sentMessage.message_id);
-      } catch (error) {
-        console.error("Failed to delete private key message:", error);
-      }
-    }, 60000);
-
-    return sentMessage;
-  } else {
-    return ctx.reply(`Sorry! We are unable to find your private key`);
-  }
+	return ctx.reply(
+		`Your private key is ${user?.privateKey}`, {
+            ...DEFAULT_KEYBOARD
+        }
+		
+	);
 });
 
 bot.action("balance", async ctx => {
@@ -648,18 +553,11 @@ bot.action("balance", async ctx => {
     if (existingUser) {
       const {empty, message} = await getBalanceMessage(existingUser.publicKey.toString());
 
-      let balanceMessage = `*💰 Your Balance:*\n\n`;
-      
-      if (empty) {
-        balanceMessage += `You have 0 SOL in your account\\.\n\n`;
-        balanceMessage += `_Please fund your wallet to start trading\\._`;
-      } else {
-        balanceMessage += `${escapeMarkdownV2(message)}`;
-      }
-
-      return ctx.replyWithMarkdownV2(balanceMessage, {
-          ...DEFAULT_KEYBOARD
-      });
+      return ctx.reply(
+        `${empty ? "You have 0 SOL in your account. Please fund your wallet to trade" : message}`, {
+            ...DEFAULT_KEYBOARD
+          }   
+      );
     } else {
       return ctx.reply(`Sorry! We are unable to load your Balance`); 
     }
@@ -674,20 +572,27 @@ bot.action("create_pot", async (ctx) => {
 
   if (existingUser) {
     try {
+      // Generate unique pot seed for this pot
+      const { createPotSeed } = await import("./solana/createVault");
+      const potSeed = createPotSeed();
+      const potSeedPublicKey = new PublicKey(potSeed.publicKey);
+
       // Initialize pot on the smart contract
       const { signature, potPDA } = await initializePotOnChain(
         existingUser.privateKey,
+        potSeedPublicKey,
         0, // performanceFeeBps 
         0  // redemptionFeeBps 
       );
 
-      // Create pot in database with PDA as vault address
+      // Create pot in database with PDA as vault address and pot seed
       const pot = await prismaClient.pot.create({
         data: {
             name: "",
             adminId: existingUser.id,
             telegramGroupId: `telegramGroupId_${ctx.from.id}_${Date.now()}`, // Use timestamp for uniqueness
             vaultAddress: potPDA.toBase58(), // Store the on-chain PDA address
+            potSeed: potSeed.publicKey, // Store the unique seed for this pot
             isGroupAdded: false
         }
       })
@@ -1150,8 +1055,10 @@ bot.command("settrader", async (ctx) => {
       }
 
       // Add trader on the smart contract first
+      const potSeedPublicKey = new PublicKey(pot.potSeed);
       const signature = await addTraderOnChain(
         adminUser.privateKey,
+        potSeedPublicKey,
         targetUser.publicKey
       );
 
@@ -1362,8 +1269,10 @@ bot.command("removetrader", async (ctx) => {
       }
 
       // Remove trader from the smart contract first
+      const potSeedPublicKey = new PublicKey(pot.potSeed);
       const signature = await removeTraderOnChain(
         adminUser.privateKey,
+        potSeedPublicKey,
         targetUser.publicKey
       );
 

@@ -258,7 +258,8 @@ withdrawFromVaultWizard.action("wizard_confirm_withdrawal", async (ctx) => {
         // Check liquid SOL balance on-chain before proceeding
        
         const adminPubkey = new PublicKey(pot.admin.publicKey);
-        const [potPda] = getPotPDA(adminPubkey);
+        const potSeedPublicKey = new PublicKey(pot.potSeed);
+        const [potPda] = getPotPDA(adminPubkey, potSeedPublicKey);
         
         // Get base mint from pot (cashOutMint or default to SOL)
         const baseMint = new PublicKey(pot.cashOutMint);
@@ -312,10 +313,11 @@ withdrawFromVaultWizard.action("wizard_confirm_withdrawal", async (ctx) => {
         const { redeemFromPot } = await import("../solana/smartContract");
 
         try {
-            // Call smart contract redeem function
+            // Call smart contract redeem function with pot seed
             const { signature, amountReceived } = await redeemFromPot(
                 user.privateKey,
                 pot.admin.publicKey,
+                potSeedPublicKey,
                 sharesToBurn,
                 baseMint
             );

@@ -25,11 +25,11 @@ const WRAPPED_SOL_MINT = new PublicKey(SOL_MINT);
 
 /**
  * Derives the Pot PDA address
- * Seeds: ["pot", adminPublicKey]
+ * Seeds: ["pot", adminPublicKey, potSeedPublicKey]
  */
-export function getPotPDA(adminPublicKey: PublicKey): [PublicKey, number] {
+export function getPotPDA(adminPublicKey: PublicKey, potSeedPublicKey: PublicKey): [PublicKey, number] {
   return PublicKey.findProgramAddressSync(
-    [Buffer.from("pot"), adminPublicKey.toBuffer()],
+    [Buffer.from("pot"), adminPublicKey.toBuffer(), potSeedPublicKey.toBuffer()],
     PROGRAM_ID
   );
 }
@@ -87,12 +87,14 @@ function serializePublicKey(pubkey: PublicKey): Buffer {
 /**
  * Initializes a pot on-chain with fees and base mint
  * @param adminPrivateKey - Admin's private key
+ * @param potSeedPublicKey - Unique seed public key for this pot (generated from createVault)
  * @param performanceFeeBps - Performance fee in basis points (default: 0)
  * @param redemptionFeeBps - Redemption fee in basis points (default: 0)
  * @param baseMint - Base mint address (default: Wrapped SOL)
  */
 export async function initializePotOnChain(
   adminPrivateKey: string,
+  potSeedPublicKey: PublicKey,
   performanceFeeBps: number = 0,
   redemptionFeeBps: number = 0,
   baseMint: PublicKey = WRAPPED_SOL_MINT
@@ -102,7 +104,7 @@ export async function initializePotOnChain(
     const adminKeypair = Keypair.fromSecretKey(secretKey);
     
     const connection = getConnection();
-    const [potPda] = getPotPDA(adminKeypair.publicKey);
+    const [potPda] = getPotPDA(adminKeypair.publicKey, potSeedPublicKey);
 
     // Create instruction data: discriminator + fees + baseMint
     const feesData = serializeFees(performanceFeeBps, redemptionFeeBps);
@@ -118,6 +120,7 @@ export async function initializePotOnChain(
     const instruction = new TransactionInstruction({
       keys: [
         { pubkey: potPda, isSigner: false, isWritable: true },
+        { pubkey: potSeedPublicKey, isSigner: false, isWritable: false },
         { pubkey: adminKeypair.publicKey, isSigner: true, isWritable: true },
         { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
       ],
@@ -136,6 +139,7 @@ export async function initializePotOnChain(
 
     console.log(`✅ Pot initialized on-chain. Signature: ${signature}`);
     console.log(`✅ Pot PDA: ${potPda.toBase58()}`);
+    console.log(`✅ Pot Seed: ${potSeedPublicKey.toBase58()}`);
 
     return { signature, potPDA: potPda };
   } catch (error) {
@@ -146,6 +150,7 @@ export async function initializePotOnChain(
 
 export async function addTraderOnChain(
   adminPrivateKey: string,
+  potSeedPublicKey: PublicKey,
   traderPublicKey: string
 ): Promise<string> {
   try {
@@ -153,7 +158,7 @@ export async function addTraderOnChain(
     const adminKeypair = Keypair.fromSecretKey(secretKey);
     
     const connection = getConnection();
-    const [potPda] = getPotPDA(adminKeypair.publicKey);
+    const [potPda] = getPotPDA(adminKeypair.publicKey, potSeedPublicKey);
     const traderPubkey = new PublicKey(traderPublicKey);
 
     // Create instruction data: discriminator + trader pubkey (32 bytes)
@@ -166,6 +171,7 @@ export async function addTraderOnChain(
     const instruction = new TransactionInstruction({
       keys: [
         { pubkey: potPda, isSigner: false, isWritable: true },
+        { pubkey: potSeedPublicKey, isSigner: false, isWritable: false },
         { pubkey: adminKeypair.publicKey, isSigner: true, isWritable: false },
       ],
       programId: PROGRAM_ID,
@@ -193,6 +199,7 @@ export async function addTraderOnChain(
 
 export async function removeTraderOnChain(
   adminPrivateKey: string,
+  potSeedPublicKey: PublicKey,
   traderPublicKey: string
 ): Promise<string> {
   try {
@@ -200,7 +207,7 @@ export async function removeTraderOnChain(
     const adminKeypair = Keypair.fromSecretKey(secretKey);
     
     const connection = getConnection();
-    const [potPda] = getPotPDA(adminKeypair.publicKey);
+    const [potPda] = getPotPDA(adminKeypair.publicKey, potSeedPublicKey);
     const traderPubkey = new PublicKey(traderPublicKey);
 
     // Create instruction data: discriminator + trader pubkey (32 bytes)
@@ -213,6 +220,7 @@ export async function removeTraderOnChain(
     const instruction = new TransactionInstruction({
       keys: [
         { pubkey: potPda, isSigner: false, isWritable: true },
+        { pubkey: potSeedPublicKey, isSigner: false, isWritable: false },
         { pubkey: adminKeypair.publicKey, isSigner: true, isWritable: false },
       ],
       programId: PROGRAM_ID,
@@ -238,11 +246,11 @@ export async function removeTraderOnChain(
   }
 }
 
-export async function getPotAccountData(adminPublicKey: string): Promise<any> {
+export async function getPotAccountData(adminPublicKey: string, potSeedPublicKey: PublicKey): Promise<any> {
   try {
     const connection = getConnection();
     const adminPubkey = new PublicKey(adminPublicKey);
-    const [potPda] = getPotPDA(adminPubkey);
+    const [potPda] = getPotPDA(adminPubkey, potSeedPublicKey);
 
     const accountInfo = await connection.getAccountInfo(potPda);
     
@@ -272,12 +280,14 @@ export async function getPotAccountData(adminPublicKey: string): Promise<any> {
  * Deposits tokens into a pot using the smart contract
  * @param userPrivateKey - User's private key
  * @param adminPublicKey - Pot admin's public key (for PDA derivation)
+ * @param potSeedPublicKey - Unique pot seed public key
  * @param amount - Amount to deposit in SOL (will be converted to lamports)
  * @param baseMint - Base mint address (default: Wrapped SOL)
  */
 export async function depositToPot(
   userPrivateKey: string,
   adminPublicKey: string,
+  potSeedPublicKey: PublicKey,
   amount: number,
   baseMint: PublicKey = WRAPPED_SOL_MINT
 ): Promise<{ signature: string; sharesMinted: bigint }> {
@@ -290,7 +300,7 @@ export async function depositToPot(
     const adminPubkey = new PublicKey(adminPublicKey);
     
     // Derive PDAs
-    const [potPda] = getPotPDA(adminPubkey);
+    const [potPda] = getPotPDA(adminPubkey, potSeedPublicKey);
     const [memberDataPda] = getMemberDataPDA(potPda, userPublicKey);
     
     // Get or create ATAs
@@ -370,8 +380,10 @@ export async function depositToPot(
     const depositInstruction = new TransactionInstruction({
       keys: [
         { pubkey: userPublicKey, isSigner: true, isWritable: true },
-        { pubkey: memberDataPda, isSigner: false, isWritable: true },
+        { pubkey: adminPubkey, isSigner: false, isWritable: false },
+        { pubkey: potSeedPublicKey, isSigner: false, isWritable: false },
         { pubkey: potPda, isSigner: false, isWritable: true },
+        { pubkey: memberDataPda, isSigner: false, isWritable: true },
         { pubkey: baseMint, isSigner: false, isWritable: false },
         { pubkey: potVaultAta, isSigner: false, isWritable: true },
         { pubkey: userVaultAta, isSigner: false, isWritable: true },
@@ -409,12 +421,14 @@ export async function depositToPot(
  * Redeems (withdraws) tokens from a pot using the smart contract
  * @param userPrivateKey - User's private key
  * @param adminPublicKey - Pot admin's public key (for PDA derivation)
+ * @param potSeedPublicKey - Unique pot seed public key
  * @param sharesToBurn - Number of shares to burn
  * @param baseMint - Base mint address (default: Wrapped SOL)
  */
 export async function redeemFromPot(
   userPrivateKey: string,
   adminPublicKey: string,
+  potSeedPublicKey: PublicKey,
   sharesToBurn: bigint,
   baseMint: PublicKey = WRAPPED_SOL_MINT
 ): Promise<{ signature: string; amountReceived: bigint }> {
@@ -427,7 +441,7 @@ export async function redeemFromPot(
     const adminPubkey = new PublicKey(adminPublicKey);
     
     // Derive PDAs
-    const [potPda] = getPotPDA(adminPubkey);
+    const [potPda] = getPotPDA(adminPubkey, potSeedPublicKey);
     const [memberDataPda] = getMemberDataPDA(potPda, userPublicKey);
     
     // Get ATAs
@@ -468,9 +482,10 @@ export async function redeemFromPot(
     const redeemInstruction = new TransactionInstruction({
       keys: [
         { pubkey: userPublicKey, isSigner: true, isWritable: true },
-        { pubkey: memberDataPda, isSigner: false, isWritable: true },
-        { pubkey: potPda, isSigner: false, isWritable: true },
         { pubkey: adminPubkey, isSigner: false, isWritable: false },
+        { pubkey: potSeedPublicKey, isSigner: false, isWritable: false },
+        { pubkey: potPda, isSigner: false, isWritable: true },
+        { pubkey: memberDataPda, isSigner: false, isWritable: true },
         { pubkey: potVaultAta, isSigner: false, isWritable: true },
         { pubkey: userVaultAta, isSigner: false, isWritable: true },
         { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
@@ -506,6 +521,7 @@ export async function redeemFromPot(
  * Sets swap delegate - gives trader temporary permission to spend from pot vault
  * @param traderPrivateKey - Trader's private key
  * @param adminPublicKey - Admin's public key (pot owner)
+ * @param potSeedPublicKey - Unique pot seed public key
  * @param amount - Amount (in smallest units) the trader is authorized to spend
  * @param tokenMint - The mint address of the token to authorize spending (the INPUT token being sold)
  * @returns Transaction signature
@@ -513,6 +529,7 @@ export async function redeemFromPot(
 export async function setSwapDelegate(
   traderPrivateKey: string,
   adminPublicKey: string,
+  potSeedPublicKey: PublicKey,
   amount: bigint,
   tokenMint: PublicKey
 ): Promise<string> {
@@ -523,7 +540,7 @@ export async function setSwapDelegate(
     const adminPubkey = new PublicKey(adminPublicKey);
     
     // Derive pot PDA
-    const [potPda] = getPotPDA(adminPubkey);
+    const [potPda] = getPotPDA(adminPubkey, potSeedPublicKey);
     
     // Get pot's vault ATA for the specific token being sold
     // This is the token the trader will spend FROM (e.g., USDC vault when selling USDC)
@@ -558,6 +575,7 @@ export async function setSwapDelegate(
         { pubkey: traderKeypair.publicKey, isSigner: true, isWritable: true },
         { pubkey: potPda, isSigner: false, isWritable: true },
         { pubkey: adminPubkey, isSigner: false, isWritable: false },
+        { pubkey: potSeedPublicKey, isSigner: false, isWritable: false },
         { pubkey: potVaultAta, isSigner: false, isWritable: true },
         { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
       ],
@@ -588,12 +606,14 @@ export async function setSwapDelegate(
  * Revokes swap delegate - removes trader's permission to spend from pot vault
  * @param traderPrivateKey - Trader's private key
  * @param adminPublicKey - Admin's public key (pot owner)
+ * @param potSeedPublicKey - Unique pot seed public key
  * @param tokenMint - The mint address of the token to revoke authorization (the INPUT token that was sold)
  * @returns Transaction signature
  */
 export async function revokeSwapDelegate(
   traderPrivateKey: string,
   adminPublicKey: string,
+  potSeedPublicKey: PublicKey,
   tokenMint: PublicKey
 ): Promise<string> {
   try {
@@ -603,7 +623,7 @@ export async function revokeSwapDelegate(
     const adminPubkey = new PublicKey(adminPublicKey);
     
     // Derive pot PDA
-    const [potPda] = getPotPDA(adminPubkey);
+    const [potPda] = getPotPDA(adminPubkey, potSeedPublicKey);
     
     // Get pot's vault ATA for the specific token that was delegated
     // This must be the SAME vault that was passed to setSwapDelegate
@@ -621,6 +641,7 @@ export async function revokeSwapDelegate(
         { pubkey: traderKeypair.publicKey, isSigner: true, isWritable: false },
         { pubkey: potPda, isSigner: false, isWritable: true },
         { pubkey: adminPubkey, isSigner: false, isWritable: false },
+        { pubkey: potSeedPublicKey, isSigner: false, isWritable: false },
         { pubkey: potVaultAta, isSigner: false, isWritable: true },
         { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
       ],

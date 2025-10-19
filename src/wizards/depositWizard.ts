@@ -211,12 +211,17 @@ depositSolToVaultWizard.action("wizard_confirm_deposit", async (ctx) => {
 
         // Import smart contract functions
         const { depositToPot } = await import("../solana/smartContract");
+        const { PublicKey } = await import("@solana/web3.js");
         
         try {
+            // Get pot seed from database
+            const potSeedPublicKey = new PublicKey(pot.potSeed);
+            
             // Call smart contract deposit function
             const { signature, sharesMinted } = await depositToPot(
                 user.privateKey,
                 pot.admin.publicKey,
+                potSeedPublicKey,
                 amount
             );
 
