@@ -323,18 +323,18 @@ async function showPersonalPortfolio(ctx: any) {
     potDetails.sort((a, b) => b.pnlPercentage - a.pnlPercentage);
 
     let message = `*📊 Your Personal Portfolio*\n\n`;
-    message += `\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\n\n`;
+    message += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
-    message += `*Key Metrics*\n\n`;
-    message += `*Total Deposited:* \\$${escapeMarkdownV2Amount(totalDepositedUSD)}\n`;
-    message += `*Total Withdrawn:* \\$${escapeMarkdownV2Amount(totalWithdrawnUSD)}\n`;
-    message += `*Current Holdings:* \\$${escapeMarkdownV2Amount(totalCurrentValueUSD)}\n`;
-    message += `*Total Value:* \\$${escapeMarkdownV2Amount(totalCurrentValueUSD + totalWithdrawnUSD)}\n`;
-    message += `*All\\-Time P&L:* ${pnlSign}\\$${escapeMarkdownV2Amount(Math.abs(totalPnL))} \\(${pnlSign}${escapeMarkdownV2Amount(Math.abs(totalPnLPercentage))}%\\) ${pnlEmoji}\n\n`;
+    message += `*💎 Key Metrics*\n\n`;
+    message += `*Total Deposited:*\n\`\\$${escapeMarkdownV2Amount(totalDepositedUSD)}\`\n\n`;
+    message += `*Total Withdrawn:*\n\`\\$${escapeMarkdownV2Amount(totalWithdrawnUSD)}\`\n\n`;
+    message += `*Current Holdings:*\n\`\\$${escapeMarkdownV2Amount(totalCurrentValueUSD)}\`\n\n`;
+    message += `*Total Value:*\n\`\\$${escapeMarkdownV2Amount(totalCurrentValueUSD + totalWithdrawnUSD)}\`\n\n`;
+    message += `*All\\-Time P&L:*\n${pnlSign}\`\\$${escapeMarkdownV2Amount(Math.abs(totalPnL))}\` \\(${pnlSign}\`${escapeMarkdownV2Amount(Math.abs(totalPnLPercentage))}%\`\\) ${pnlEmoji}\n\n`;
     
-    message += `\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\n\n`;
+    message += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
     
-    message += `*💼 Your Pots Breakdown*\n\n`;
+    message += `*💼 Your Pots Breakdown* \\(${potDetails.length}\\)\n\n`;
 
     for (let i = 0; i < potDetails.length; i++) {
         const pot = potDetails[i];
@@ -343,45 +343,47 @@ async function showPersonalPortfolio(ctx: any) {
         const potPnlSign = pot.pnl >= 0 ? "\\+" : "\\-";
         const statusEmoji = pot.isActive ? "📈" : "📤"; 
         
-        message += `${statusEmoji} *${escapeMarkdownV2(pot.name)}*\n`;
-        message += `> Deposited: \\$${escapeMarkdownV2Amount(pot.depositedUSD)}\n`;
+        message += `${statusEmoji} *${escapeMarkdownV2(pot.name)}* ${potPnlEmoji}\n`;
+        message += `┣ Deposited: \`\\$${escapeMarkdownV2Amount(pot.depositedUSD)}\`\n`;
         if (pot.withdrawnUSD > 0) {
-            message += `> Withdrawn: \\$${escapeMarkdownV2Amount(pot.withdrawnUSD)}\n`;
+            message += `┣ Withdrawn: \`\\$${escapeMarkdownV2Amount(pot.withdrawnUSD)}\`\n`;
         }
-        message += `> Current Value: \\$${escapeMarkdownV2Amount(pot.currentValueUSD)}\n`;
+        message += `┣ Current: \`\\$${escapeMarkdownV2Amount(pot.currentValueUSD)}\`\n`;
         if (pot.isActive) {
-            message += `> Your Share: ${escapeMarkdownV2(pot.sharePercentage.toFixed(2))}%\n`;
+            message += `┣ Share: \`${escapeMarkdownV2(pot.sharePercentage.toFixed(2))}%\`\n`;
         }
-        message += `> P&L: ${potPnlSign}\\$${escapeMarkdownV2Amount(Math.abs(pot.pnl))} \\(${potPnlSign}${escapeMarkdownV2Amount(Math.abs(pot.pnlPercentage))}%\\) ${potPnlEmoji}\n`;
+        message += `┗ P&L: ${potPnlSign}\`\\$${escapeMarkdownV2Amount(Math.abs(pot.pnl))}\` \\(${potPnlSign}\`${escapeMarkdownV2Amount(Math.abs(pot.pnlPercentage))}%\`\\)\n`;
         
         if (i < potDetails.length - 1) {
             message += `\n`;
         }
     }
 
-    message += `\n\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\n\n`;
+    message += `\n━━━━━━━━━━━━━━━━━━━━━\n\n`;
     
-    message += `*Portfolio Statistics*\n\n`;
+    message += `*📈 Portfolio Statistics*\n\n`;
     const totalPots = potDetails.length;
     const activePots = potDetails.filter(p => p.isActive).length;
     const profitablePots = potDetails.filter(p => p.pnl > 0).length;
-    message += `*Pots:* ${totalPots} total \\(${activePots} active\\)\n`;
-    message += `*Profitable Pots:* ${profitablePots} / ${totalPots}\n`;
+    message += `*Active Pots:* \`${activePots}\` / \`${totalPots}\`\n`;
+    message += `*Profitable:* \`${profitablePots}\` / \`${totalPots}\`\n`;
     if (activePots > 0) {
         const avgActivePotSize = totalCurrentValueUSD / activePots;
-        message += `*Avg Pot Value:* \\$${escapeMarkdownV2Amount(avgActivePotSize)}\n`;
+        message += `*Avg Pot Value:* \`\\$${escapeMarkdownV2Amount(avgActivePotSize)}\`\n`;
     }
     
     if (potDetails.length > 0) {
         const bestPot = potDetails[0];
         if (bestPot && bestPot.pnlPercentage > 0) {
-            message += `*Best Performer:* ${escapeMarkdownV2(bestPot.name)} \\(\\+${escapeMarkdownV2Amount(bestPot.pnlPercentage)}%\\)\n`;
+            message += `*Best Performer:* ${escapeMarkdownV2(bestPot.name)}\n  \\+\`${escapeMarkdownV2Amount(bestPot.pnlPercentage)}%\` 🏆\n`;
         }
     }
     
     message += `\n_Last updated: ${escapeMarkdownV2(new Date().toLocaleString())}_`;
 
-  await ctx.replyWithMarkdownV2(message);
+  await ctx.replyWithMarkdownV2(message, {
+    ...DEFAULT_KEYBOARD
+  });
 }
 
 async function showGroupPortfolio(ctx: any) {
@@ -439,8 +441,13 @@ async function showGroupPortfolio(ctx: any) {
     return bValue - aValue;
   });
 
-  for (const asset of sortedAssets) {
-    if (asset.balance === BigInt(0)) continue;
+  const nonZeroAssets = sortedAssets.filter(asset => asset.balance !== BigInt(0));
+  
+  for (let i = 0; i < nonZeroAssets.length; i++) {
+    const asset = nonZeroAssets[i];
+    if (!asset) continue;
+    
+    const isLast = i === nonZeroAssets.length - 1;
 
     const decimals = await getTokenDecimalsWithCache(asset.mintAddress);
     const balanceReadable = Number(asset.balance) / (10 ** decimals);
@@ -462,9 +469,9 @@ async function showGroupPortfolio(ctx: any) {
       emoji = "🎯";
     }
 
-    assetAllocation += `\n${emoji} *${escapeMarkdownV2(symbol)}:*\n`;
-    assetAllocation += `> Balance: \`${escapeMarkdownV2Amount(balanceReadable)}\`\n`;
-    assetAllocation += `> Value: \\$${escapeMarkdownV2Amount(valueUSD)} \\(${escapeMarkdownV2Amount(percentage)}%\\)\n`;
+    assetAllocation += `\n${emoji} *${escapeMarkdownV2(symbol)}* \\(\`${escapeMarkdownV2Amount(percentage)}%\`\\)\n`;
+    assetAllocation += `┣ Balance: \`${escapeMarkdownV2Amount(balanceReadable)}\`\n`;
+    assetAllocation += `${isLast ? '┗' : '┗'} Value: \`\\$${escapeMarkdownV2Amount(valueUSD)}\`\n`;
   }
 
   const navPerShareUSD = pot.totalShares > BigInt(0) 
@@ -483,31 +490,62 @@ async function showGroupPortfolio(ctx: any) {
   const hasUntrackedDeposits = actualSOLBalance > (trackedNetSOL * 1.01); // 1% tolerance
 
   let message = `*📈 Group Portfolio: ${escapeMarkdownV2(pot.name || "Unnamed Pot")}*\n\n`;
-  message += `\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\n\n`;
   
-  message += `*Key Metrics*\n\n`;
-  message += `*Total Value Locked \\(TVL\\):* \\$${escapeMarkdownV2Amount(potValueUSD)}\n`;
-  message += `*All\\-Time PnL:* ${pnlSign}\\$${escapeMarkdownV2Amount(Math.abs(allTimePnLUSD))} \\(${pnlSign}${escapeMarkdownV2Amount(Math.abs(allTimePnLPercentage))}%\\) ${pnlEmoji}\n`;
-  message += `*Tracked Deposits:* \\$${escapeMarkdownV2Amount(totalDepositsUSD)}\n`;
-  message += `*Tracked Withdrawals:* \\$${escapeMarkdownV2Amount(totalWithdrawalsUSD)}\n`;
+  message += `*💎 Key Metrics*\n\n`;
+  message += `*Total Value Locked \\(TVL\\):*\n\`\\$${escapeMarkdownV2Amount(potValueUSD)}\`\n\n`;
+  message += `*All\\-Time PnL:*\n${pnlSign}\`\\$${escapeMarkdownV2Amount(Math.abs(allTimePnLUSD))}\` \\(${pnlSign}\`${escapeMarkdownV2Amount(Math.abs(allTimePnLPercentage))}%\`\\) ${pnlEmoji}\n\n`;
+  message += `*Tracked Deposits:*\n\`\\$${escapeMarkdownV2Amount(totalDepositsUSD)}\`\n\n`;
+  message += `*Tracked Withdrawals:*\n\`\\$${escapeMarkdownV2Amount(totalWithdrawalsUSD)}\`\n\n`;
   
   if (hasUntrackedDeposits) {
-    message += `\n_ℹ️ Note: Current balance suggests additional deposits made outside bot \\(e\\.g\\. via Phantom\\)\\. PnL may be higher than actual\\._\n`;
+    message += `_ℹ️ Note: Current balance suggests additional deposits made outside bot \\(e\\.g\\. via Phantom\\)\\. PnL may be higher than actual\\._\n\n`;
   }
-  message += `\n`;
   
-  message += `\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\n\n`;
-  message += `*Asset Allocation*`;
+  message += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
+  message += `*🪙 Asset Allocation*\n`;
   message += assetAllocation;
   
-  message += `\n\n\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\n\n`;
-  message += `*Pot Statistics*\n\n`;
-  message += `*Members:* \`${pot.members.length}\`\n`;
-  message += `*Total Shares Issued:* \`${escapeMarkdownV2Amount(Number(pot.totalShares))}\`\n`;
-  message += `*Net Asset Value \\(NAV\\) per Share:* \\$${escapeMarkdownV2Amount(navPerShareUSD)}\n`;
-  message += `*Inception Date:* \`${escapeMarkdownV2(inceptionDate)}\`\n`;
+  message += `\n\n━━━━━━━━━━━━━━━━━━━━━\n\n`;
+  message += `*📊 Pot Statistics*\n\n`;
+  message += `*Members:* \`${pot.members.length}\`\n\n`;
+  message += `*Total Shares Issued:*\n\`${escapeMarkdownV2Amount(Number(pot.totalShares))}\`\n\n`;
+  message += `*Net Asset Value \\(NAV\\) per Share:*\n\`\\$${escapeMarkdownV2Amount(navPerShareUSD)}\`\n\n`;
+  message += `*Inception Date:*\n\`${escapeMarkdownV2(inceptionDate)}\`\n`;
 
-  await ctx.replyWithMarkdownV2(message);
+  // Try to get and delete old pinned portfolio message from the bot
+  try {
+    const chat = await ctx.telegram.getChat(ctx.chat.id);
+    if (chat.pinned_message) {
+      const pinnedMessage = chat.pinned_message;
+      // Check if the pinned message is from the bot and contains "Group Portfolio"
+      if (pinnedMessage.from?.id === ctx.botInfo.id && 
+          pinnedMessage.text?.includes("Group Portfolio")) {
+        try {
+          await ctx.telegram.unpinChatMessage(ctx.chat.id, pinnedMessage.message_id);
+          await ctx.telegram.deleteMessage(ctx.chat.id, pinnedMessage.message_id);
+        } catch (error) {
+          console.log("Could not delete/unpin old portfolio message:", error);
+        }
+      }
+    }
+  } catch (error) {
+    console.log("Could not get chat info:", error);
+  }
+
+  // Send new portfolio message
+  const sentMessage = await ctx.replyWithMarkdownV2(message, {
+    ...DEFAULT_GROUP_KEYBOARD
+  });
+
+  // Pin the new message
+  try {
+    await ctx.telegram.pinChatMessage(ctx.chat.id, sentMessage.message_id, {
+      disable_notification: true // Don't notify all members
+    });
+  } catch (error) {
+    console.error("Failed to pin portfolio message:", error);
+    await ctx.reply("⚠️ Could not pin the portfolio message. Please make sure I have admin rights with 'Pin Messages' permission.");
+  }
 }
 
 bot.command("portfolio", handlePortfolio);
