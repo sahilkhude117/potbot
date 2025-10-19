@@ -1,16 +1,18 @@
 import { Markup } from "telegraf";
 
 export const DEFAULT_KEYBOARD = Markup.inlineKeyboard([[
-    Markup.button.callback("Show public key", "public_key"),
+    Markup.button.callback("Show Public key", "public_key"),
     Markup.button.callback("Show Balance", "balance"),   
+    Markup.button.callback("Export Private key", "private_key"),   
 ],[
     Markup.button.callback("Create Pot", "create_pot"),
     Markup.button.callback("Join Pot", "join_pot"),
-],[
     Markup.button.callback("My Pots", "show_pots")
-], [
+],[
     Markup.button.callback("Buy", "buy"),
     Markup.button.callback("Sell", "sell")
+],[
+    Markup.button.callback("View Portfolio", 'portfolio')
 ]]);
 
 export const ADD_POTBOT_TO_GROUP = Markup.inlineKeyboard([[

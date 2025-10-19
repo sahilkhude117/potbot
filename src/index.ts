@@ -123,8 +123,21 @@ bot.start(async (ctx) => {
           const publicKey = existingUser.publicKey;
           const { empty, message } = await getBalanceMessage(existingUser.publicKey.toString());
 
-          ctx.reply(`Welcome to the Pot Bot. Here is your public key ${publicKey} 
-            ${empty ? "Your wallet is empty please fund it to trade on SOL": message}`, {
+          let welcomeMessage = `*🎉 Welcome to Pot Bot\\!*\n\n`;
+          welcomeMessage += `*Your Wallet Address:*\n`;
+          welcomeMessage += `\`${escapeMarkdownV2(publicKey)}\`\n\n`;
+          
+          if (empty) {
+            welcomeMessage += `*💰 Balance:*\n`;
+            welcomeMessage += `Your wallet is currently empty\\.\n\n`;
+            welcomeMessage += `_Please fund your wallet with SOL to start trading\\._`;
+          } else {
+            welcomeMessage += `*💰 Balance:*\n`;
+            welcomeMessage += `${escapeMarkdownV2(message)}\n\n`;
+            welcomeMessage += `_You're all set to trade on Solana\\!_`;
+          }
+
+          ctx.replyWithMarkdownV2(welcomeMessage, {
               ...DEFAULT_KEYBOARD
           })
       } else {
@@ -137,8 +150,15 @@ bot.start(async (ctx) => {
             }
         })
         const publicKey = keypair.publicKey.toString();
-        ctx.reply(`Welcome to the Pot Bot. Here is your public key ${publicKey} 
-        You can trade on solana now. Put some SOL to trade.`, {
+        
+        let welcomeMessage = `*🎉 Welcome to Pot Bot\\!*\n\n`;
+        welcomeMessage += `*Your Wallet Address:*\n`;
+        welcomeMessage += `\`${escapeMarkdownV2(publicKey)}\`\n\n`;
+        welcomeMessage += `*💰 Balance:*\n`;
+        welcomeMessage += `Your wallet is currently empty\\.\n\n`;
+        welcomeMessage += `_Please fund your wallet with SOL to start trading\\._`;
+
+        ctx.replyWithMarkdownV2(welcomeMessage, {
             ...DEFAULT_KEYBOARD
         })
       }
@@ -180,8 +200,15 @@ async function showPersonalPortfolio(ctx: any) {
       }
     });
     const publicKey = keypair.publicKey.toString();
-    await ctx.reply(`Welcome to the Pot Bot. Here is your public key ${publicKey} 
-    You can trade on solana now. Put some SOL to trade.`, {
+    
+    let welcomeMessage = `*🎉 Welcome to Pot Bot\\!*\n\n`;
+    welcomeMessage += `*Your Wallet Address:*\n`;
+    welcomeMessage += `\`${escapeMarkdownV2(publicKey)}\`\n\n`;
+    welcomeMessage += `*💰 Balance:*\n`;
+    welcomeMessage += `Your wallet is currently empty\\.\n\n`;
+    welcomeMessage += `_Please fund your wallet with SOL to start trading\\._`;
+
+    await ctx.replyWithMarkdownV2(welcomeMessage, {
       ...DEFAULT_KEYBOARD
     });
     return;
@@ -517,11 +544,21 @@ bot.action("public_key", async ctx => {
     if (existingUser) {
       const {empty, message} = await getBalanceMessage(existingUser.publicKey.toString());
 
-      return ctx.reply(
-        `Your public key is ${existingUser?.publicKey} ${empty ? "Fund your wallet to trade" : message}`, {
-            ...DEFAULT_KEYBOARD
-          }   
-      );
+      let keyMessage = `*🔑 Your Wallet Address:*\n`;
+      keyMessage += `\`${escapeMarkdownV2(existingUser?.publicKey)}\`\n\n`;
+      
+      if (empty) {
+        keyMessage += `*💰 Balance:*\n`;
+        keyMessage += `Your wallet is currently empty\\.\n\n`;
+        keyMessage += `_Please fund your wallet with SOL to start trading\\._`;
+      } else {
+        keyMessage += `*💰 Balance:*\n`;
+        keyMessage += `${escapeMarkdownV2(message)}`;
+      }
+
+      return ctx.replyWithMarkdownV2(keyMessage, {
+          ...DEFAULT_KEYBOARD
+      });
     } else {
       return ctx.reply(`Sorry! We are unable to find your publicKey`); 
     }
@@ -534,12 +571,33 @@ bot.action("private_key", async ctx => {
       }
   })
 
-	return ctx.reply(
-		`Your private key is ${user?.privateKey}`, {
-            ...DEFAULT_KEYBOARD
-        }
-		
-	);
+  if (user) {
+    let privateKeyMessage = `*🔐 Your Private Key*\n\n`;
+    privateKeyMessage += `⚠️ *KEEP THIS SECRET\\!*\n\n`;
+    privateKeyMessage += `\`${escapeMarkdownV2(user.privateKey)}\`\n\n`;
+    privateKeyMessage += `*🚨 Security Warning:*\n`;
+    privateKeyMessage += `• Never share this with anyone\n`;
+    privateKeyMessage += `• Anyone with this key can access your funds\n`;
+    privateKeyMessage += `• This message will auto\\-delete in 1 minute\n\n`;
+    privateKeyMessage += `_Save it securely now\\!_`;
+
+    const sentMessage = await ctx.replyWithMarkdownV2(privateKeyMessage, {
+      ...DEFAULT_KEYBOARD
+    });
+
+    // Delete the message after 1 minute (60000 milliseconds)
+    setTimeout(async () => {
+      try {
+        await ctx.deleteMessage(sentMessage.message_id);
+      } catch (error) {
+        console.error("Failed to delete private key message:", error);
+      }
+    }, 60000);
+
+    return sentMessage;
+  } else {
+    return ctx.reply(`Sorry! We are unable to find your private key`);
+  }
 });
 
 bot.action("balance", async ctx => {
@@ -552,11 +610,18 @@ bot.action("balance", async ctx => {
     if (existingUser) {
       const {empty, message} = await getBalanceMessage(existingUser.publicKey.toString());
 
-      return ctx.reply(
-        `${empty ? "You have 0 SOL in your account. Please fund your wallet to trade" : message}`, {
-            ...DEFAULT_KEYBOARD
-          }   
-      );
+      let balanceMessage = `*💰 Your Balance:*\n\n`;
+      
+      if (empty) {
+        balanceMessage += `You have 0 SOL in your account\\.\n\n`;
+        balanceMessage += `_Please fund your wallet to start trading\\._`;
+      } else {
+        balanceMessage += `${escapeMarkdownV2(message)}`;
+      }
+
+      return ctx.replyWithMarkdownV2(balanceMessage, {
+          ...DEFAULT_KEYBOARD
+      });
     } else {
       return ctx.reply(`Sorry! We are unable to load your Balance`); 
     }
