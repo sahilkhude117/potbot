@@ -18,6 +18,7 @@ import { sellTokenForSolWizardGroup } from "./wizards/sellTokenForSolGroupWizard
 import { computePotValueInUSD } from "./solana/computePotValueInUSD";
 import { getTokenDecimalsWithCache } from "./solana/getTokenDecimals";
 import { initializePotOnChain, addTraderOnChain, removeTraderOnChain} from "./solana/smartContract";
+import { getRecentTransactions, formatTransactionsMessage } from "./zerion/getRecentTransactions";
 
 const bot = new Telegraf<BotContext>(process.env.TELEGRAM_BOT_TOKEN!)
 
@@ -170,6 +171,52 @@ bot.action('deposit', (ctx) => ctx.scene.enter("deposit_sol_to_vault_wizard"))
 
 bot.command('withdraw', (ctx) => ctx.scene.enter("withdraw_from_vault_wizard"))
 bot.action('withdraw', (ctx) => ctx.scene.enter("withdraw_from_vault_wizard"))
+
+bot.command('transactions', recentTransactions);
+bot.action("recent_transactions", recentTransactions);
+
+async function recentTransactions(ctx: any) {
+  try {
+      const existingUser = await prismaClient.user.findFirst({
+          where: {
+              telegramUserId: ctx.from?.id.toString()
+          }
+      });
+
+      if (!existingUser) {
+          return ctx.reply("❌ User not found. Please start the bot first.", {
+              ...DEFAULT_KEYBOARD
+          });
+      }
+
+      const loadingMsg = await ctx.reply("🔄 Loading your recent transactions...");
+
+      const transactions = await getRecentTransactions(
+          existingUser.publicKey,
+          5,
+          ['solana']
+      );
+
+      await ctx.deleteMessage(loadingMsg.message_id);
+
+      const message = formatTransactionsMessage(transactions, existingUser.publicKey, 'devnet');
+      
+      return ctx.replyWithMarkdownV2(message, {
+          ...DEFAULT_KEYBOARD,
+          link_preview_options: { is_disabled: true }
+      });
+
+  } catch (error: any) {
+      console.error("Error in transactions command:", error);
+      return ctx.reply(
+          `❌ Failed to fetch recent transactions.\n\n` +
+          `Error: ${error.message || 'Unknown error'}`,
+          {
+              ...DEFAULT_KEYBOARD
+          }
+      );
+  }
+}
 
 async function handlePortfolio(ctx: any) {
   try {
@@ -723,6 +770,56 @@ bot.action("balance", async ctx => {
         });
     }
 })
+
+bot.action("recent_transactions", async (ctx) => {
+    try {
+        const existingUser = await prismaClient.user.findFirst({
+            where: {
+                telegramUserId: ctx.from?.id.toString()
+            }
+        });
+
+        if (!existingUser) {
+            return ctx.reply("❌ User not found. Please start the bot first.", {
+                ...DEFAULT_KEYBOARD
+            });
+        }
+
+        // Send a loading message
+        await ctx.answerCbQuery("Fetching recent transactions...");
+        const loadingMsg = await ctx.reply("🔄 Loading your recent transactions...");
+
+        // Fetch recent transactions from Zerion API
+        // Using Solana chain for this bot
+        const transactions = await getRecentTransactions(
+            existingUser.publicKey,
+            5, // Get last 5 transactions
+            ['solana'] // Filter for Solana chain only
+        );
+
+        // Delete loading message
+        await ctx.deleteMessage(loadingMsg.message_id);
+
+        // Format and send the transactions message
+        // Use 'devnet' for development, change to 'mainnet-beta' for production
+        const message = formatTransactionsMessage(transactions, existingUser.publicKey, 'devnet');
+        
+        return ctx.replyWithMarkdownV2(message, {
+            ...DEFAULT_KEYBOARD,
+            link_preview_options: { is_disabled: true }
+        });
+
+    } catch (error: any) {
+        console.error("Error in recent_transactions action:", error);
+        return ctx.reply(
+            `❌ Failed to fetch recent transactions.\n\n` +
+            `Error: ${error.message || 'Unknown error'}`,
+            {
+                ...DEFAULT_KEYBOARD
+            }
+        );
+    }
+});
 
 bot.action("create_pot", async (ctx) => {
   const existingUser = await prismaClient.user.findFirst({

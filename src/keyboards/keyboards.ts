@@ -9,13 +9,16 @@ export const DEFAULT_KEYBOARD = Markup.inlineKeyboard([[
     Markup.button.callback("Join Pot", "join_pot"),
     Markup.button.callback("My Pots", "show_pots")
 ],[
-    Markup.button.callback("Deposit", "deposit"),
-    Markup.button.callback("Withdraw", "withdraw")
+    Markup.button.callback("Deposit to Pot", "deposit"),
+    Markup.button.callback("Withdraw from Pot", "withdraw")
 ],[
-    Markup.button.callback("Buy", "buy"),
-    Markup.button.callback("Sell", "sell")
+    Markup.button.callback("Buy Tokens", "buy"),
+    Markup.button.callback("Sell Tokens", "sell")
 ],[
-    Markup.button.callback("View Portfolio", 'portfolio')
+    Markup.button.callback("Start Copy Trading", "copy_trading")
+],[
+    Markup.button.callback("Recent Transactions", "recent_transactions"),
+    Markup.button.callback("View Portfolio", 'portfolio'),
 ]]);
 
 export const ADD_POTBOT_TO_GROUP = Markup.inlineKeyboard([[
@@ -49,8 +52,8 @@ export const CHECK_BALANCE_KEYBOARD = Markup.inlineKeyboard([
 ])
 
 export const DEFAULT_GROUP_KEYBOARD = Markup.inlineKeyboard([[
-    Markup.button.callback("Buy", "buy_token_with_solana_group"),
-    Markup.button.callback("Sell", "sell_token_for_solana_group")
+    Markup.button.callback("Buy Tokens", "buy_token_with_solana_group"),
+    Markup.button.callback("Sell Tokens", "sell_token_for_solana_group")
 ],[
-    Markup.button.callback("Portfolio", "portfolio")
+    Markup.button.callback("View Portfolio", "portfolio")
 ]])
