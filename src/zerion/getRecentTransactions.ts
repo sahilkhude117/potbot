@@ -170,7 +170,7 @@ export function formatTransactionsMessage(
   }
 
   let message = `*📊 Recent Transactions*\n\n`;
-  message += `Wallet: \`${escapeMarkdownV2(walletAddress.slice(0, 8))}...${escapeMarkdownV2(walletAddress.slice(-6))}\`\n\n`;
+  message += `Wallet: \`${escapeMarkdownV2(walletAddress)}\`\n\n`;
   message += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
   transactions.forEach((tx, index) => {
@@ -222,7 +222,7 @@ function escapeMarkdownV2(text: string): string {
   return text.replace(/[_*\[\]()~`>#+\-=|{}.!]/g, '\\$&');
 }
 
-function formatAmount(amount: number): string {
+export function formatAmount(amount: number): string {
   if (amount === 0) return '0';
   if (amount < 0.000001) return amount.toExponential(2);
   if (amount < 1) return amount.toFixed(6);
@@ -230,7 +230,7 @@ function formatAmount(amount: number): string {
   return amount.toLocaleString('en-US', { maximumFractionDigits: 2 });
 }
 
-function getTypeEmoji(type: string): string {
+export function getTypeEmoji(type: string): string {
   const emojiMap: { [key: string]: string } = {
     'trade': '🔄',
     'send': '📤',
