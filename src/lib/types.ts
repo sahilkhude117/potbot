@@ -64,6 +64,14 @@ export interface SellTokenGroupWizardState extends Scenes.WizardSessionData {
     }>;
 }
 
+export interface CopyTradingWizardState extends Scenes.WizardSessionData {
+    userId: string;
+    targetWalletAddress: string;
+    allocatedPercentage: number;
+    mode: 'PERMISSIONED' | 'PERMISSIONLESS';
+    userBalance: number;
+}
+
 export interface SessionData extends Scenes.WizardSession<DepositWizardState> {}
 
 export interface BotContext extends Context {

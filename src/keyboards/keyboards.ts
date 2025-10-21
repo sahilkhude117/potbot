@@ -15,7 +15,7 @@ export const DEFAULT_KEYBOARD = Markup.inlineKeyboard([[
     Markup.button.callback("Buy Tokens", "buy"),
     Markup.button.callback("Sell Tokens", "sell")
 ],[
-    Markup.button.callback("Start Copy Trading", "copy_trading")
+    Markup.button.callback("Copy Trading (Beta)", "copy_trading")
 ],[
     Markup.button.callback("Recent Transactions", "recent_transactions"),
     Markup.button.callback("View Portfolio", 'portfolio'),
@@ -54,8 +54,6 @@ export const CHECK_BALANCE_KEYBOARD = Markup.inlineKeyboard([
 export const DEFAULT_GROUP_KEYBOARD = Markup.inlineKeyboard([[
     Markup.button.callback("Buy Tokens", "buy_token_with_solana_group"),
     Markup.button.callback("Sell Tokens", "sell_token_for_solana_group")
-],[
-    Markup.button.callback("Start Copy Trading", "copy_trading_group")
 ],[
     Markup.button.callback("View Portfolio", 'portfolio'),
 ]]);

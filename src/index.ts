@@ -15,13 +15,21 @@ import { buyTokenWithSolWizard } from "./wizards/buyTokenWithSolWizard";
 import { buyTokenWithSolWizardGroup } from "./wizards/buyTokenWithSolGroupWizard";
 import { sellTokenForSolWizard } from "./wizards/sellTokenForSolWizard";
 import { sellTokenForSolWizardGroup } from "./wizards/sellTokenForSolGroupWizard";
+import { copyTradingWizard } from "./wizards/copyTradingWizard";
 import { computePotValueInUSD } from "./solana/computePotValueInUSD";
 import { getTokenDecimalsWithCache } from "./solana/getTokenDecimals";
 import { initializePotOnChain, addTraderOnChain, removeTraderOnChain} from "./solana/smartContract";
 import { getRecentTransactions, formatTransactionsMessage, formatAmount, getTypeEmoji } from "./zerion/getRecentTransactions";
 import { getExplorerUrl } from "./solana/getConnection";
+import { CopyTradingService } from "./services/copyTradingService";
+import { decodeSecretKey } from "./lib/utils";
+import { showCopyTradeStatus } from "./lib/copyTradingStatus";
 
 const bot = new Telegraf<BotContext>(process.env.TELEGRAM_BOT_TOKEN!)
+
+// Start copy trading service
+const copyTradingService = new CopyTradingService(bot as any);
+copyTradingService.start();
 
 const stage = new Scenes.Stage<BotContext>([
   depositSolToVaultWizard,
@@ -29,7 +37,8 @@ const stage = new Scenes.Stage<BotContext>([
   buyTokenWithSolWizard,
   buyTokenWithSolWizardGroup,
   sellTokenForSolWizard,
-  sellTokenForSolWizardGroup
+  sellTokenForSolWizardGroup,
+  copyTradingWizard
 ]);
 bot.use(session());
 bot.use(stage.middleware());
@@ -178,6 +187,203 @@ bot.action("recent_transactions", recentTransactions);
 
 bot.command('trades', recentTrades);
 bot.action("recent_trades", recentTrades);
+
+bot.command('copytrade', handleCopyTrade);
+bot.action('copy_trading', handleCopyTrade);
+
+async function handleCopyTrade(ctx: any) {
+  try {
+    const isGroup = (ctx.chat?.type === "group" || ctx.chat?.type === "supergroup");
+    
+    if (isGroup) {
+      return ctx.reply("⚠️ Copy Trading is only available in private chat.\n\nPlease message me directly @solana_pot_bot", {
+        ...SOLANA_POT_BOT
+      });
+    }
+
+    const existingUser = await prismaClient.user.findFirst({
+      where: {
+        telegramUserId: ctx.from?.id.toString()
+      },
+      include: {
+        copyTrading: {
+          include: {
+            copiedTrades: {
+              orderBy: { createdAt: 'desc' },
+              take: 5
+            }
+          }
+        }
+      }
+    });
+
+    if (!existingUser) {
+      return ctx.reply("❌ User not found. Please register first.", {
+        ...DEFAULT_KEYBOARD
+      });
+    }
+
+    if (existingUser.copyTrading && existingUser.copyTrading.isActive) {
+      return showCopyTradeStatus(ctx, existingUser);
+    }
+
+    return ctx.scene.enter("copy_trading_wizard");
+  } catch (error) {
+    console.error("Error in copy_trading action:", error);
+    return ctx.reply("❌ Something went wrong. Please try again.", {
+      ...DEFAULT_KEYBOARD
+    });
+  }
+}
+
+bot.command("stopcopytrade", async (ctx) => {
+  try {
+    const isGroup = (ctx.chat?.type === "group" || ctx.chat?.type === "supergroup");
+    
+    if (isGroup) {
+      return ctx.reply("⚠️ Copy Trading is only available in private chat.\n\nPlease message me directly @solana_pot_bot", {
+        ...SOLANA_POT_BOT
+      });
+    }
+
+    const existingUser = await prismaClient.user.findFirst({
+      where: {
+        telegramUserId: ctx.from?.id.toString()
+      }
+    });
+
+    if (!existingUser) {
+      return ctx.reply("❌ User not found. Please register first.", {
+        ...DEFAULT_KEYBOARD
+      });
+    }
+
+    const copyTrading = await prismaClient.copyTrading.findUnique({
+      where: { userId: existingUser.id }
+    });
+
+    if (!copyTrading || !copyTrading.isActive) {
+      return ctx.reply("ℹ️ You don't have any active copy trading.", {
+        ...DEFAULT_KEYBOARD
+      });
+    }
+
+    await prismaClient.copyTrading.update({
+      where: { userId: existingUser.id },
+      data: { isActive: false }
+    });
+
+    await ctx.replyWithMarkdownV2(
+      `✅ *Copy Trading Stopped*\n\n` +
+      `🎯 *Trader:* \`${escapeMarkdownV2(copyTrading.targetWalletAddress.slice(0, 8))}...${escapeMarkdownV2(copyTrading.targetWalletAddress.slice(-8))}\`\n\n` +
+      `The bot is no longer monitoring this trader's wallet\\.\n\n` +
+      `_Use /copytrade to start copy trading again_`,
+      {
+        ...DEFAULT_KEYBOARD
+      }
+    );
+
+  } catch (error) {
+    console.error("Error stopping copy trading:", error);
+    await ctx.reply("❌ Something went wrong. Please try again.", {
+      ...DEFAULT_KEYBOARD
+    });
+  }
+});
+
+bot.command("copytradestatus", async (ctx) => {
+  try {
+    const isGroup = (ctx.chat?.type === "group" || ctx.chat?.type === "supergroup");
+    
+    if (isGroup) {
+      return ctx.reply("⚠️ Copy Trading is only available in private chat.\n\nPlease message me directly @solana_pot_bot", {
+        ...SOLANA_POT_BOT
+      });
+    }
+
+    const existingUser = await prismaClient.user.findFirst({
+      where: {
+        telegramUserId: ctx.from?.id.toString()
+      },
+      include: {
+        copyTrading: {
+          include: {
+            copiedTrades: {
+              orderBy: { createdAt: 'desc' },
+              take: 5
+            }
+          }
+        }
+      }
+    });
+
+    if (!existingUser) {
+      return ctx.reply("❌ User not found. Please register first.", {
+        ...DEFAULT_KEYBOARD
+      });
+    }
+
+    if (!existingUser.copyTrading) {
+      return ctx.replyWithMarkdownV2(
+        `ℹ️ *No Copy Trading Setup*\n\n` +
+        `You haven't set up copy trading yet\\.\n\n` +
+        `_Use /copytrade to get started\\!_`,
+        {
+          ...DEFAULT_KEYBOARD
+        }
+      );
+    }
+
+    const ct = existingUser.copyTrading;
+    const statusEmoji = ct.isActive ? "🟢" : "🔴";
+    const statusText = ct.isActive ? "Active" : "Stopped";
+    const modeEmoji = ct.mode === 'PERMISSIONED' ? "🔐" : "⚡";
+
+    const totalTrades = ct.copiedTrades.length;
+    const successfulTrades = ct.copiedTrades.filter(t => t.status === 'EXECUTED').length;
+    const failedTrades = ct.copiedTrades.filter(t => t.status === 'FAILED').length;
+    const pendingTrades = ct.copiedTrades.filter(t => t.status === 'PENDING' || t.status === 'CONFIRMED').length;
+
+    let message = `📊 *Copy Trading Status*\n\n` +
+      `${statusEmoji} *Status:* ${escapeMarkdownV2(statusText)}\n\n` +
+      `🎯 *Trader:* \`${escapeMarkdownV2(ct.targetWalletAddress.slice(0, 8))}...${escapeMarkdownV2(ct.targetWalletAddress.slice(-8))}\`\n\n` +
+      `💰 *Allocated:* ${escapeMarkdownV2Amount(Number(ct.allocatedPercentage))}%\n\n` +
+      `${modeEmoji} *Mode:* ${escapeMarkdownV2(ct.mode)}\n\n` +
+      `━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+    if (totalTrades > 0) {
+      message += `📈 *Trade Statistics*\n\n` +
+        `✅ Successful: ${successfulTrades}\n` +
+        `❌ Failed: ${failedTrades}\n` +
+        `⏳ Pending: ${pendingTrades}\n\n`;
+    } else {
+      message += `ℹ️ No trades copied yet\\.\n\n`;
+    }
+
+    const buttons = [];
+    
+    if (ct.isActive) {
+      buttons.push([Markup.button.callback("⏸️ Stop Copy Trading", "stop_copy_trade")]);
+      if (ct.mode === 'PERMISSIONED') {
+        buttons.push([Markup.button.callback("⚡ Switch to Permissionless", "switch_mode_permissionless")]);
+      } else {
+        buttons.push([Markup.button.callback("🔐 Switch to Permissioned", "switch_mode_permissioned")]);
+      }
+    } else {
+      buttons.push([Markup.button.callback("▶️ Resume Copy Trading", "resume_copy_trade")]);
+    }
+
+    buttons.push([Markup.button.callback("🔙 Back to Menu", "back_to_menu")]);
+
+    await ctx.replyWithMarkdownV2(message, Markup.inlineKeyboard(buttons));
+
+  } catch (error) {
+    console.error("Error checking copy trading status:", error);
+    await ctx.reply("❌ Something went wrong. Please try again.", {
+      ...DEFAULT_KEYBOARD
+    });
+  }
+});
 
 async function recentTransactions(ctx: any) {
   try {
@@ -1972,6 +2178,174 @@ bot.command("traderhelp", async (ctx) => {
     `• Admins automatically have trading permissions`;
 
   await ctx.reply(helpMessage);
+});
+
+// Copy trading action handlers
+bot.action("switch_mode_permissioned", async (ctx) => {
+  try {
+    await ctx.answerCbQuery("Switching to Permissioned mode...");
+
+    const existingUser = await prismaClient.user.findFirst({
+      where: { telegramUserId: ctx.from?.id.toString() },
+      include: { 
+        copyTrading: {
+          include: {
+            copiedTrades: {
+              orderBy: { createdAt: 'desc' },
+              take: 5
+            }
+          }
+        }
+      }
+    });
+
+    if (!existingUser?.copyTrading) {
+      return ctx.reply("❌ Copy trading not found.");
+    }
+
+    await prismaClient.copyTrading.update({
+      where: { userId: existingUser.id },
+      data: { mode: 'PERMISSIONED' }
+    });
+
+    // Refresh user data with updated mode
+    const updatedUser = await prismaClient.user.findFirst({
+      where: { telegramUserId: ctx.from?.id.toString() },
+      include: { 
+        copyTrading: {
+          include: {
+            copiedTrades: {
+              orderBy: { createdAt: 'desc' },
+              take: 5
+            }
+          }
+        }
+      }
+    });
+
+    // Show full trade status with updated mode
+    await showCopyTradeStatus(ctx, updatedUser);
+  } catch (error) {
+    console.error("Error switching mode:", error);
+    await ctx.reply("❌ Failed to switch mode.");
+  }
+});
+
+bot.action("switch_mode_permissionless", async (ctx) => {
+  try {
+    await ctx.answerCbQuery("Switching to Permissionless mode...");
+
+    const existingUser = await prismaClient.user.findFirst({
+      where: { telegramUserId: ctx.from?.id.toString() },
+      include: { 
+        copyTrading: {
+          include: {
+            copiedTrades: {
+              orderBy: { createdAt: 'desc' },
+              take: 5
+            }
+          }
+        }
+      }
+    });
+
+    if (!existingUser?.copyTrading) {
+      return ctx.reply("❌ Copy trading not found.");
+    }
+
+    await prismaClient.copyTrading.update({
+      where: { userId: existingUser.id },
+      data: { mode: 'PERMISSIONLESS' }
+    });
+
+    // Refresh user data with updated mode
+    const updatedUser = await prismaClient.user.findFirst({
+      where: { telegramUserId: ctx.from?.id.toString() },
+      include: { 
+        copyTrading: {
+          include: {
+            copiedTrades: {
+              orderBy: { createdAt: 'desc' },
+              take: 5
+            }
+          }
+        }
+      }
+    });
+
+    // Show full trade status with updated mode
+    await showCopyTradeStatus(ctx, updatedUser);
+  } catch (error) {
+    console.error("Error switching mode:", error);
+    await ctx.reply("❌ Failed to switch mode.");
+  }
+});
+
+bot.action("stop_copy_trade", async (ctx) => {
+  try {
+    await ctx.answerCbQuery();
+
+    const existingUser = await prismaClient.user.findFirst({
+      where: { telegramUserId: ctx.from?.id.toString() },
+      include: { copyTrading: true }
+    });
+
+    if (!existingUser?.copyTrading) {
+      return ctx.reply("❌ Copy trading not found.");
+    }
+
+    const ct = existingUser.copyTrading;
+
+    await prismaClient.copyTrading.update({
+      where: { userId: existingUser.id },
+      data: { isActive: false }
+    });
+
+    await ctx.replyWithMarkdownV2(
+      `✅ *Copy Trading Stopped*\n\n` +
+      `🎯 *Trader:* \`${escapeMarkdownV2(ct.targetWalletAddress.slice(0, 8))}...${escapeMarkdownV2(ct.targetWalletAddress.slice(-8))}\`\n\n` +
+      `The bot is no longer monitoring trades\\.\n\n` +
+      `_Use /copytrade to start again_`,
+      { ...DEFAULT_KEYBOARD }
+    );
+  } catch (error) {
+    console.error("Error stopping copy trading:", error);
+    await ctx.reply("❌ Failed to stop copy trading.");
+  }
+});
+
+bot.action("resume_copy_trade", async (ctx) => {
+  try {
+    await ctx.answerCbQuery();
+
+    const existingUser = await prismaClient.user.findFirst({
+      where: { telegramUserId: ctx.from?.id.toString() },
+      include: { copyTrading: true }
+    });
+
+    if (!existingUser?.copyTrading) {
+      return ctx.reply("❌ Copy trading not found.");
+    }
+
+    await prismaClient.copyTrading.update({
+      where: { userId: existingUser.id },
+      data: { isActive: true }
+    });
+
+    await ctx.replyWithMarkdownV2(
+      `✅ *Copy Trading Resumed*\n\n` +
+      `The bot is now monitoring trades again\\.`,
+      { ...DEFAULT_KEYBOARD }
+    );
+  } catch (error) {
+    console.error("Error resuming copy trading:", error);
+    await ctx.reply("❌ Failed to resume copy trading.");
+  }
+});
+
+bot.action("back_to_menu", async (ctx) => {
+  await ctx.answerCbQuery();
+  await ctx.reply("👋 Main Menu", { ...DEFAULT_KEYBOARD });
 });
 
 bot.launch()
