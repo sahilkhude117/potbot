@@ -17,6 +17,7 @@ model User {
 
   potsCreated      Pot[]     @relation("AdminRelation")
   potMemberships   Pot_Member[]   
+  copyTrading      CopyTrading?
 
   createdAt        DateTime   @default(now())
 }
@@ -158,5 +159,53 @@ enum TradeStatus {
   COMPLETED
   PENDING
   FAILED
+}
+
+model CopyTrading {
+  id                    String      @id @default(uuid())
+  userId                String      @unique
+  user                  User        @relation(fields: [userId], references: [id])
+
+  targetWalletAddress   String
+  allocatedPercentage   Decimal     // % of user's wallet to use for copy trading
+  mode                  CopyTradingMode @default(PERMISSIONED)
+  isActive              Boolean     @default(true)
+
+  createdAt             DateTime    @default(now())
+  updatedAt             DateTime    @updatedAt
+
+  copiedTrades          CopiedTrade[]
+}
+
+model CopiedTrade {
+  id                    String      @id @default(uuid())
+  copyTradingId         String
+  copyTrading           CopyTrading @relation(fields: [copyTradingId], references: [id])
+
+  originalTxHash        String
+  copiedTxHash          String?
+
+  inMint                String
+  inAmount              BigInt
+  outMint               String
+  outAmount             BigInt
+
+  status                CopiedTradeStatus @default(PENDING)
+  failureReason         String?
+
+  createdAt             DateTime    @default(now())
+}
+
+enum CopyTradingMode {
+  PERMISSIONED
+  PERMISSIONLESS
+}
+
+enum CopiedTradeStatus {
+  PENDING
+  CONFIRMED
+  EXECUTED
+  FAILED
+  CANCELLED
 }
 
