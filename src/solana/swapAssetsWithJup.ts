@@ -1,9 +1,11 @@
 import axios from "axios";
 import { getCluster } from "./getConnection";
 
-const JUP_URl = "https://lite-api.jup.ag";
+const JUP_URL = "https://lite-api.jup.ag";
 const SWAP_URL = "https://lite-api.jup.ag/swap/v1/swap";
 const SLIPPAGE = 50;
+const PLATFORM_FEE_BPS = 100; // 1%
+const FEE_ACCOUNT_PUBLIC_KEY = ""
 
 
 export async function getQuote(
@@ -17,7 +19,12 @@ export async function getQuote(
     let quoteConfig = {
         method: 'get',
         maxBodyLength: Infinity,
-        url: `${JUP_URl}/swap/v1/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${quantity}&slippageBps=${SLIPPAGE}&userPublicKey=${userPublicKey}&platformFeeBps=0`,
+        url: `${JUP_URL}/swap/v1/quote?inputMint=${inputMint}` +
+                `&outputMint=${outputMint}` +
+                `&amount=${quantity}` +
+                `&slippageBps=${SLIPPAGE}` +
+                `&userPublicKey=${userPublicKey}` +
+                `&platformFeeBps=${PLATFORM_FEE_BPS}`,
         headers: { 
             'Accept': 'application/json'
         }
@@ -42,10 +49,11 @@ export async function executeSwap(
             'Accept': 'application/json'
         },
         data: {
-            quoteResponse: quoteResponse, 
-            payer: userPublicKey, 
-            userPublicKey: userPublicKey, 
-            cluster: cluster
+            quoteResponse: quoteResponse,
+            userPublicKey: userPublicKey,
+            payer: userPublicKey,
+            feeAccount: FEE_ACCOUNT_PUBLIC_KEY,
+            cluster: cluster,
         }
     };
 
