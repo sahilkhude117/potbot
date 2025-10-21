@@ -5,8 +5,7 @@ const JUP_URL = "https://lite-api.jup.ag";
 const SWAP_URL = "https://lite-api.jup.ag/swap/v1/swap";
 const SLIPPAGE = 50;
 const PLATFORM_FEE_BPS = 100; // 1%
-const FEE_ACCOUNT_PUBLIC_KEY = ""
-
+const FEE_ACCOUNT_PUBLIC_KEY = process.env.FEE_ACCOUNT_PUBLIC_KEY!;
 
 export async function getQuote(
     inputMint: string,
