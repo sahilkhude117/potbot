@@ -5,18 +5,29 @@ const ZERION_API_BASE_URL = 'https://api.zerion.io';
 const ZERION_API_KEY_BS64 = process.env.ZERION_API_KEY_BS64;
 
 interface TransactionChange {
-  asset: {
-    fungible_info?: {
-      name: string;
-      symbol: string;
-      icon?: {
-        url: string;
-      };
+  fungible_info?: {
+    name: string;
+    symbol: string;
+    icon?: {
+      url: string;
     };
+    implementations?: Array<{
+      chain_id: string;
+      address: string;
+      decimals: number;
+    }>;
+  };
+  nft_info?: any;
+  quantity: {
+    int: string;
+    decimals: string;
+    numeric: string;
   };
   value: number;
   price: number;
-  direction: 'in' | 'out';
+  direction: 'in' | 'out' | 'self';
+  sender: string;
+  recipient: string;
 }
 
 interface Transaction {
@@ -74,8 +85,11 @@ export interface FormattedTransaction {
     asset: string;
     symbol: string;
     amount: number;
-    direction: 'in' | 'out';
+    direction: 'in' | 'out' | 'self';
     valueUSD: number;
+    mintAddress?: string; // Extracted from implementations array
+    sender: string;
+    recipient: string;
   }[];
 }
 
@@ -149,13 +163,23 @@ function formatTransaction(tx: Transaction): FormattedTransaction {
       symbol: attributes.fee?.fungible_info?.symbol || '',
       valueUSD: attributes.fee?.price || 0,
     },
-    transfers: attributes.transfers.map((transfer) => ({
-      asset: transfer.asset?.fungible_info?.name || 'Unknown',
-      symbol: transfer.asset?.fungible_info?.symbol || '???',
-      amount: transfer.value,
-      direction: transfer.direction,
-      valueUSD: transfer.price,
-    })),
+    transfers: attributes.transfers.map((transfer) => {
+      // Extract mint address from implementations for Solana chain
+      const solanaImpl = transfer.fungible_info?.implementations?.find(
+        impl => impl.chain_id === 'solana'
+      );
+      
+      return {
+        asset: transfer.fungible_info?.name || 'Unknown',
+        symbol: transfer.fungible_info?.symbol || '???',
+        amount: transfer.value,
+        direction: transfer.direction,
+        valueUSD: transfer.price,
+        mintAddress: solanaImpl?.address,
+        sender: transfer.sender,
+        recipient: transfer.recipient,
+      };
+    }),
   };
 }
 

@@ -16,12 +16,22 @@ export interface ParsedTransfer {
  * @param signature Transaction signature to parse
  * @returns Array of parsed transfers
  */
-export async function parseTransaction(signature: string): Promise<ParsedTransfer[]> {
+export async function parseTransaction(signature: string, retries: number = 2): Promise<ParsedTransfer[]> {
     try {
-        const tx = await connection.getParsedTransaction(signature, {
+        // Try with 'finalized' first for more reliable data
+        let tx = await connection.getParsedTransaction(signature, {
             maxSupportedTransactionVersion: 0,
-            commitment: 'confirmed'
+            commitment: 'finalized'
         });
+
+        // If not found with finalized, try confirmed
+        if (!tx && retries > 0) {
+            console.log(`Transaction ${signature} not finalized yet, trying confirmed...`);
+            tx = await connection.getParsedTransaction(signature, {
+                maxSupportedTransactionVersion: 0,
+                commitment: 'confirmed'
+            });
+        }
 
         if (!tx || !tx.meta) {
             console.log(`Transaction ${signature} not found or has no metadata`);
@@ -106,8 +116,15 @@ export async function getSwapMints(signature: string, walletAddress: string): Pr
     try {
         const transfers = await parseTransaction(signature);
         
+        if (transfers.length === 0) {
+            console.log(`⚠️ [PARSE ERROR] Transaction ${signature.slice(0, 8)}...${signature.slice(-8)} has no token transfers`);
+            console.log(`   Possible reasons: transaction not finalized, not found on RPC, or has no metadata`);
+            return null;
+        }
+        
         if (transfers.length < 2) {
-            console.log(`Transaction ${signature} doesn't have enough transfers for a swap`);
+            console.log(`⚠️ [PARSE ERROR] Transaction ${signature.slice(0, 8)}...${signature.slice(-8)} has insufficient transfers (found ${transfers.length}, need ≥2)`);
+            console.log(`   This might not be a swap transaction`);
             return null;
         }
 
@@ -116,22 +133,32 @@ export async function getSwapMints(signature: string, walletAddress: string): Pr
             t.owner.toLowerCase() === walletAddress.toLowerCase()
         );
 
+        if (walletTransfers.length === 0) {
+            console.log(`⚠️ [PARSE ERROR] No transfers for wallet ${walletAddress.slice(0, 8)}...${walletAddress.slice(-8)} in tx ${signature.slice(0, 8)}...${signature.slice(-8)}`);
+            console.log(`   Wallet might not be involved in this transaction`);
+            return null;
+        }
+
         // Find the token that went out (input) and the token that came in (output)
         const outTransfer = walletTransfers.find(t => t.direction === 'out');
         const inTransfer = walletTransfers.find(t => t.direction === 'in');
 
         if (!outTransfer || !inTransfer) {
-            console.log(`Could not determine swap direction for ${signature}`);
+            console.log(`⚠️ [PARSE ERROR] Could not determine swap direction for ${signature.slice(0, 8)}...${signature.slice(-8)}`);
+            console.log(`   Found: ${walletTransfers.length} transfers (out: ${!!outTransfer}, in: ${!!inTransfer})`);
+            console.log(`   This might be a one-way transfer, not a swap`);
             return null;
         }
 
+        console.log(`✅ [PARSE SUCCESS] Swap parsed: ${outTransfer.mint.slice(0, 8)}... → ${inTransfer.mint.slice(0, 8)}... | Tx: ${signature.slice(0, 8)}...${signature.slice(-8)}`);
+        
         return {
             inputMint: outTransfer.mint,
             outputMint: inTransfer.mint
         };
 
     } catch (error) {
-        console.error(`Error getting swap mints for ${signature}:`, error);
+        console.error(`❌ [PARSE ERROR] Exception getting swap mints for ${signature.slice(0, 8)}...${signature.slice(-8)}:`, error);
         return null;
     }
 }

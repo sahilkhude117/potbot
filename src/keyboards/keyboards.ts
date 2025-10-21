@@ -57,3 +57,14 @@ export const DEFAULT_GROUP_KEYBOARD = Markup.inlineKeyboard([[
 ],[
     Markup.button.callback("View Portfolio", 'portfolio'),
 ]]);
+
+export const COPY_TRADING_KEYBOARD = Markup.inlineKeyboard([[
+    Markup.button.callback("📊 View Status", "copytradestatus")
+],[
+    Markup.button.callback("🔐 → ⚡ Permissionless", "switch_mode_permissionless"),
+    Markup.button.callback("⚡ → 🔐 Permissioned", "switch_mode_permissioned")
+],[
+    Markup.button.callback("⏸️ Stop Copy Trading", "stop_copy_trade")
+],[
+    Markup.button.callback("🔙 Main Menu", "back_to_menu")
+]]);

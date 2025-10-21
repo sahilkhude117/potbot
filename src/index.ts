@@ -121,6 +121,7 @@ bot.command("stopcopytrade", stopCopyTradeHandler);
 bot.action("stop_copy_trade", stopCopyTradeHandler);
 
 bot.command("copytradestatus", copyTradeStatusHandler);
+bot.action("copytradestatus", copyTradeStatusHandler);
 
 bot.action("switch_mode_permissioned", switchModePermissionedHandler);
 bot.action("switch_mode_permissionless", switchModePermissionlessHandler);

@@ -58,7 +58,7 @@ export async function copyTradeStatusHandler(ctx: any) {
 
     let message = `📊 *Copy Trading Status*\n\n` +
       `${statusEmoji} *Status:* ${escapeMarkdownV2(statusText)}\n\n` +
-      `🎯 *Trader:* \`${escapeMarkdownV2(ct.targetWalletAddress.slice(0, 8))}...${escapeMarkdownV2(ct.targetWalletAddress.slice(-8))}\`\n\n` +
+      `🎯 *Trader:* \`${escapeMarkdownV2(ct.targetWalletAddress)}\`\n\n` +
       `💰 *Allocated:* ${escapeMarkdownV2Amount(Number(ct.allocatedPercentage))}%\n\n` +
       `${modeEmoji} *Mode:* ${escapeMarkdownV2(ct.mode)}\n\n` +
       `━━━━━━━━━━━━━━━━━━━━━\n\n`;

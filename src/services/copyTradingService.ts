@@ -8,7 +8,7 @@ import { SOL_MINT } from "../lib/statits";
 import { getUserTokenAccounts } from "../solana/getTokenAccounts";
 import { getConnection, getExplorerUrl } from "../solana/getConnection";
 import { Markup, Telegraf } from "telegraf";
-import { DEFAULT_KEYBOARD } from "../keyboards/keyboards";
+import { DEFAULT_KEYBOARD, COPY_TRADING_KEYBOARD } from "../keyboards/keyboards";
 import { getSwapMints } from "../solana/parseTransaction";
 
 const connection = getConnection();
@@ -78,6 +78,15 @@ export class CopyTradingService {
             );
 
             for (const tx of tradeTxs) {
+                // Debug log: Check what Zerion is reporting
+                console.log(`\n🔍 [ZERION DATA] Transaction ${tx.hash.slice(0, 8)}...${tx.hash.slice(-8)}`);
+                console.log(`   Type: ${tx.type}`);
+                console.log(`   Status: ${tx.status}`);
+                console.log(`   Transfers from Zerion: ${tx.transfers.length}`);
+                tx.transfers.forEach((t, i) => {
+                    console.log(`   Transfer ${i + 1}: ${t.direction.toUpperCase()} ${t.amount} ${t.symbol}`);
+                });
+                
                 // Mark as processed immediately to prevent duplicate processing
                 processedTxHashes.add(tx.hash);
 
@@ -103,19 +112,67 @@ export class CopyTradingService {
             const userKeypair = Keypair.fromSecretKey(decodeSecretKey(user.privateKey));
 
             // Identify buy and sell tokens from the trade
-            const inTransfer = tx.transfers.find(t => t.direction === 'out');
-            const outTransfer = tx.transfers.find(t => t.direction === 'in');
+            // Zerion's 'out' = what was sold (input to swap)
+            // Zerion's 'in' = what was bought (output from swap)
+            const sellTransfer = tx.transfers.find(t => t.direction === 'out');
+            const buyTransfer = tx.transfers.find(t => t.direction === 'in');
 
-            if (!inTransfer || !outTransfer) {
-                console.log(`Trade ${tx.hash} doesn't have clear in/out transfers`);
+            console.log(`\n📋 [ZERION TRANSFERS] Processing ${tx.hash.slice(0, 8)}...${tx.hash.slice(-8)}`);
+            console.log(`   Sell transfer: ${sellTransfer ? `${sellTransfer.amount} ${sellTransfer.symbol} (mint: ${sellTransfer.mintAddress || 'NONE'})` : 'NOT FOUND'}`);
+            console.log(`   Buy transfer: ${buyTransfer ? `${buyTransfer.amount} ${buyTransfer.symbol} (mint: ${buyTransfer.mintAddress || 'NONE'})` : 'NOT FOUND'}`);
+
+            if (!sellTransfer || !buyTransfer) {
+                console.log(`❌ [SKIP] Trade ${tx.hash.slice(0, 8)}...${tx.hash.slice(-8)} doesn't have both sell and buy transfers`);
+                console.log(`   This might be a transfer, not a swap. Skipping silently.`);
                 return;
             }
 
-            // Get actual mint addresses from the original transaction on-chain
-            const swapMints = await getSwapMints(tx.hash, copyTrade.targetWalletAddress);
+            // Normalize SOL mint address (Zerion sometimes returns System Program address)
+            const normalizeSolMint = (mint: string | undefined): string | null => {
+                if (!mint) return null;
+                // Zerion returns "11111111111111111111111111111111" (System Program) for native SOL
+                // We need to use wrapped SOL mint: "So11111111111111111111111111111111111111112"
+                if (mint === '11111111111111111111111111111111') {
+                    return SOL_MINT;
+                }
+                return mint;
+            };
+
+            // Try to extract mint addresses from Zerion API first (from implementations array)
+            let inputMint: string | null = normalizeSolMint(sellTransfer.mintAddress);
+            let outputMint: string | null = normalizeSolMint(buyTransfer.mintAddress);
             
-            if (!swapMints) {
-                console.log(`Could not parse mints from transaction ${tx.hash}`);
+            if (inputMint) {
+                console.log(`✅ [ZERION MINT] Input mint from Zerion API: ${inputMint}`);
+            }
+            
+            if (outputMint) {
+                console.log(`✅ [ZERION MINT] Output mint from Zerion API: ${outputMint}`);
+            }
+            
+            // If Zerion doesn't provide mints, fall back to on-chain parsing
+            if (!inputMint || !outputMint) {
+                console.log(`⚠️ [FALLBACK] Zerion didn't provide mint addresses, parsing on-chain...`);
+                
+                // Add a small delay to ensure transaction is available on-chain
+                await new Promise(resolve => setTimeout(resolve, 2000)); // 2 second delay
+                
+                const swapMints = await getSwapMints(tx.hash, copyTrade.targetWalletAddress);
+                
+                if (!swapMints) {
+                    console.log(`❌ [SKIP] Could not extract mints from Zerion or on-chain for ${tx.hash.slice(0, 8)}...${tx.hash.slice(-8)}`);
+                    console.log(`   This transaction structure is not supported. Skipping silently.`);
+                    return;
+                }
+                
+                inputMint = inputMint || swapMints.inputMint;
+                outputMint = outputMint || swapMints.outputMint;
+                console.log(`✅ [ON-CHAIN MINT] Parsed from transaction: ${inputMint.slice(0, 8)}... → ${outputMint.slice(0, 8)}...`);
+            }
+
+            // At this point, inputMint and outputMint are guaranteed to be non-null strings
+            if (!inputMint || !outputMint) {
+                console.log(`❌ [ERROR] Mints are null after extraction attempts`);
                 return;
             }
 
@@ -126,10 +183,8 @@ export class CopyTradingService {
 
             // Calculate proportional amount to trade
             let proportionalAmount = 0;
-            let inputMint = swapMints.inputMint;
-            let outputMint = swapMints.outputMint;
-            let inputSymbol = inTransfer.symbol;
-            let outputSymbol = outTransfer.symbol;
+            let inputSymbol = sellTransfer.symbol;
+            let outputSymbol = buyTransfer.symbol;
 
             // Determine trade direction and calculate proportional amount
             if (inputMint === SOL_MINT) {
@@ -252,7 +307,7 @@ export class CopyTradingService {
         try {
             const message = 
                 `🔔 *Trade Confirmation Required*\n\n` +
-                `🎯 *Copying Trader:*\n\`${escapeMarkdownV2(copyTrade.targetWalletAddress.slice(0, 8))}...${escapeMarkdownV2(copyTrade.targetWalletAddress.slice(-8))}\`\n\n` +
+                `🎯 *Copying Trader:*\n\`${escapeMarkdownV2(copyTrade.targetWalletAddress)}\`\n\n` +
                 `📊 *Trade Details:*\n` +
                 `• Sell: ${escapeMarkdownV2Amount(tradeParams.amount)} ${escapeMarkdownV2(tradeParams.inputSymbol)}\n` +
                 `• Buy: ${escapeMarkdownV2(tradeParams.outputSymbol)}\n\n` +
@@ -265,12 +320,12 @@ export class CopyTradingService {
                 message,
                 {
                     parse_mode: "MarkdownV2",
+                    link_preview_options: { is_disabled: true },
                     ...Markup.inlineKeyboard([
                         [
                             Markup.button.callback("✅ Confirm", `confirm_copy_${copiedTradeId}`),
                             Markup.button.callback("❌ Reject", `reject_copy_${copiedTradeId}`)
                         ],
-                        [Markup.button.callback("⏸️ Stop Copy Trading", "stop_copy_trade")]
                     ])
                 }
             );
@@ -292,8 +347,26 @@ export class CopyTradingService {
         copiedTradeId: string,
         tradeParams: { inputMint: string; outputMint: string; amount: number; inputSymbol: string; outputSymbol: string }
     ) {
+        let notificationMsg: any = null;
+        
         try {
             const userKeypair = Keypair.fromSecretKey(decodeSecretKey(user.privateKey));
+
+            // Notify user about trade detection
+            const detectionMessage = 
+                `🔔 *New Trade Detected*\n\n` +
+                `🎯 *Copying Trader:*\n\`${escapeMarkdownV2(copyTrade.targetWalletAddress)}\`\n\n` +
+                `📊 *Trade:* ${escapeMarkdownV2Amount(tradeParams.amount)} ${escapeMarkdownV2(tradeParams.inputSymbol)} → ${escapeMarkdownV2(tradeParams.outputSymbol)}\n\n` +
+                `⏳ Getting quote\\.\\.\\.`;
+
+            notificationMsg = await this.bot.telegram.sendMessage(
+                user.telegramUserId,
+                detectionMessage,
+                { 
+                    parse_mode: "MarkdownV2",
+                    ...COPY_TRADING_KEYBOARD 
+                }
+            );
 
             // Get quote
             const amountInSmallestUnit = Math.floor(
@@ -307,6 +380,25 @@ export class CopyTradingService {
                 userKeypair.publicKey.toString()
             );
 
+            // Update message: Quote received
+            const quoteMessage = 
+                `🔔 *New Trade Detected*\n\n` +
+                `🎯 *Copying Trader:*\n\`${escapeMarkdownV2(copyTrade.targetWalletAddress)}\`\n\n` +
+                `📊 *Trade:* ${escapeMarkdownV2Amount(tradeParams.amount)} ${escapeMarkdownV2(tradeParams.inputSymbol)} → ${escapeMarkdownV2(tradeParams.outputSymbol)}\n\n` +
+                `✅ Quote received\n` +
+                `⏳ Executing swap\\.\\.\\.`;
+
+            await this.bot.telegram.editMessageText(
+                user.telegramUserId,
+                notificationMsg.message_id,
+                undefined,
+                quoteMessage,
+                { 
+                    parse_mode: "MarkdownV2",
+                    ...COPY_TRADING_KEYBOARD
+                }
+            );
+
             // Execute swap
             const swapTransaction = await executeSwap(quoteResponse, userKeypair.publicKey.toString());
 
@@ -317,6 +409,27 @@ export class CopyTradingService {
 
             const signature = await connection.sendTransaction(tx);
             const latestBlockhash = await connection.getLatestBlockhash();
+            
+            // Update message: Transaction sent
+            const sentMessage = 
+                `🔔 *New Trade Detected*\n\n` +
+                `🎯 *Copying Trader:*\n\`${escapeMarkdownV2(copyTrade.targetWalletAddress)}\`\n\n` +
+                `📊 *Trade:* ${escapeMarkdownV2Amount(tradeParams.amount)} ${escapeMarkdownV2(tradeParams.inputSymbol)} → ${escapeMarkdownV2(tradeParams.outputSymbol)}\n\n` +
+                `✅ Quote received\n` +
+                `✅ Swap executed\n` +
+                `⏳ Confirming transaction\\.\\.\\.`;
+
+            await this.bot.telegram.editMessageText(
+                user.telegramUserId,
+                notificationMsg.message_id,
+                undefined,
+                sentMessage,
+                { 
+                    parse_mode: "MarkdownV2",
+                    ...COPY_TRADING_KEYBOARD
+                }
+            );
+
             await connection.confirmTransaction({
                 signature,
                 blockhash: latestBlockhash.blockhash,
@@ -333,17 +446,24 @@ export class CopyTradingService {
                 }
             });
 
-            // Notify user
+            // Delete processing message and send success message
+            await this.bot.telegram.deleteMessage(user.telegramUserId, notificationMsg.message_id);
+
             const successMessage = 
                 `✅ *Trade Executed Successfully*\n\n` +
-                `🔄 Swapped: ${escapeMarkdownV2Amount(tradeParams.amount)} ${escapeMarkdownV2(tradeParams.inputSymbol)} → ${escapeMarkdownV2(tradeParams.outputSymbol)}\n\n` +
-                `🔗 [View Transaction](${getExplorerUrl(signature)})\n` +
-                `📊 [View Original](${getExplorerUrl(originalTx.hash)})`;
+                `🎯 *Trader:* \`${escapeMarkdownV2(copyTrade.targetWalletAddress)}\`\n\n` +
+                `🔄 *Swapped:* ${escapeMarkdownV2Amount(tradeParams.amount)} ${escapeMarkdownV2(tradeParams.inputSymbol)} → ${escapeMarkdownV2(tradeParams.outputSymbol)}\n\n` +
+                `🔗 [View Your Transaction](${getExplorerUrl(signature)})\n` +
+                `📊 [View Original Trade](${getExplorerUrl(originalTx.hash)})`;
 
             await this.bot.telegram.sendMessage(
                 user.telegramUserId,
                 successMessage,
-                { parse_mode: "MarkdownV2", ...DEFAULT_KEYBOARD }
+                { 
+                    parse_mode: "MarkdownV2", 
+                    link_preview_options: { is_disabled: true },
+                    ...COPY_TRADING_KEYBOARD 
+                }
             );
 
         } catch (error) {
@@ -355,12 +475,40 @@ export class CopyTradingService {
                 data: { status: 'FAILED' }
             });
 
-            // Notify user
+            // Delete processing message if exists
+            if (notificationMsg) {
+                try {
+                    await this.bot.telegram.deleteMessage(user.telegramUserId, notificationMsg.message_id);
+                } catch (e) {
+                    console.error("Error deleting notification message:", e);
+                }
+            }
+
+            // Notify user of failure
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            let userFriendlyError = errorMessage;
+
+            // Make error messages more user-friendly
+            if (errorMessage.includes('insufficient')) {
+                userFriendlyError = 'Insufficient balance or liquidity';
+            } else if (errorMessage.includes('slippage')) {
+                userFriendlyError = 'Price moved too much (slippage exceeded)';
+            } else if (errorMessage.includes('timeout')) {
+                userFriendlyError = 'Transaction timed out';
+            }
+
             await this.bot.telegram.sendMessage(
                 user.telegramUserId,
                 `❌ *Trade Execution Failed*\n\n` +
-                `Error: ${escapeMarkdownV2(error instanceof Error ? error.message : 'Unknown error')}`,
-                { parse_mode: "MarkdownV2", ...DEFAULT_KEYBOARD }
+                `🎯 *Trader:* \`${escapeMarkdownV2(copyTrade.targetWalletAddress)}\`\n\n` +
+                `📊 *Attempted:* ${escapeMarkdownV2Amount(tradeParams.amount)} ${escapeMarkdownV2(tradeParams.inputSymbol)} → ${escapeMarkdownV2(tradeParams.outputSymbol)}\n\n` +
+                `⚠️ *Reason:* ${escapeMarkdownV2(userFriendlyError)}\n\n` +
+                `🔗 [View Original Trade](${getExplorerUrl(originalTx.hash)})`,
+                { 
+                    parse_mode: "MarkdownV2", 
+                    link_preview_options: { is_disabled: true },
+                    ...COPY_TRADING_KEYBOARD 
+                }
             );
         }
     }
@@ -371,13 +519,48 @@ export class CopyTradingService {
                 user.telegramUserId,
                 `⚠️ *Trade Skipped*\n\n` +
                 `Reason: ${escapeMarkdownV2(reason)}\n\n` +
-                `🔗 [View Original Trade](${getExplorerUrl(tx.hash)})`,
+                `🔗 [View Original Trade](${getExplorerUrl(tx.hash)})\n\n` +
+                `_The bot will continue monitoring for future trades\\._`,
                 {
-                    parse_mode: "MarkdownV2"
+                    parse_mode: "MarkdownV2",
+                    link_preview_options: { is_disabled: true },
+                    ...COPY_TRADING_KEYBOARD
                 }
             );
         } catch (error) {
             console.error("Error notifying user about skipped trade:", error);
+        }
+    }
+
+    private async notifyUserTransactionParsingFailed(user: any, copyTrade: any, tx: FormattedTransaction) {
+        console.log(`⚠️ Skipping transaction ${tx.hash} for user ${user.telegramUserId}: Unable to parse swap mints`);
+        console.log(`   Trader: ${copyTrade.targetWalletAddress}`);
+        console.log(`   Reason: Transaction parsing failed (not enough transfers, no metadata, or incompatible structure)`);
+        
+        try {
+            // Notify user about the skipped transaction
+            const message = 
+                `⚠️ *Trade Skipped*\n\n` +
+                `🎯 *Trader:* \`${escapeMarkdownV2(copyTrade.targetWalletAddress)}\`\n\n` +
+                `📋 *Reason:* Unable to process this transaction\n\n` +
+                `*Possible causes:*\n` +
+                `• Transaction not yet finalized on\\-chain\n` +
+                `• Non\\-standard swap structure\n` +
+                `• Not a token swap transaction\n\n` +
+                `🔗 [View Transaction](${getExplorerUrl(tx.hash)})\n\n` +
+                `_The bot will continue monitoring for other trades\\._`;
+
+            await this.bot.telegram.sendMessage(
+                user.telegramUserId,
+                message,
+                { 
+                    parse_mode: "MarkdownV2", 
+                    link_preview_options: { is_disabled: true },
+                    ...COPY_TRADING_KEYBOARD 
+                }
+            );
+        } catch (error) {
+            console.error("Error notifying user about transaction parsing failure:", error);
         }
     }
 }

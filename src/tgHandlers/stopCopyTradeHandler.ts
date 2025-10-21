@@ -47,7 +47,7 @@ export async function stopCopyTradeHandler(ctx: any) {
 
     await ctx.replyWithMarkdownV2(
       `✅ *Copy Trading Stopped*\n\n` +
-      `🎯 *Trader:* \`${escapeMarkdownV2(copyTrading.targetWalletAddress.slice(0, 8))}...${escapeMarkdownV2(copyTrading.targetWalletAddress.slice(-8))}\`\n\n` +
+      `🎯 *Trader:* \`${escapeMarkdownV2(copyTrading.targetWalletAddress)}\`\n\n` +
       `The bot is no longer monitoring this trader's wallet\\.\n\n` +
       `_Use /copytrade to start copy trading again_`,
       {

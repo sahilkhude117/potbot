@@ -183,7 +183,7 @@ copyTradingWizard.action("wizard_mode_permissioned", async (ctx) => {
 
         await ctx.replyWithMarkdownV2(
             `✅ *Copy Trading Activated\\!*\n\n` +
-            `🎯 *Trader:* \`${escapeMarkdownV2(state.targetWalletAddress.slice(0, 8))}...${escapeMarkdownV2(state.targetWalletAddress.slice(-8))}\`\n\n` +
+            `🎯 *Trader:* \`${escapeMarkdownV2(state.targetWalletAddress)}\`\n\n` +
             `💰 *Allocated:* ${escapeMarkdownV2Amount(state.allocatedPercentage)}% \\(${escapeMarkdownV2Amount(allocatedAmount)} SOL\\)\n\n` +
             `🔐 *Mode:* Permissioned\n\n` +
             `━━━━━━━━━━━━━━━━━━━━━\n\n` +
@@ -245,7 +245,7 @@ copyTradingWizard.action("wizard_mode_permissionless", async (ctx) => {
 
         await ctx.replyWithMarkdownV2(
             `✅ *Copy Trading Activated\\!*\n\n` +
-            `🎯 *Trader:* \`${escapeMarkdownV2(state.targetWalletAddress.slice(0, 8))}...${escapeMarkdownV2(state.targetWalletAddress.slice(-8))}\`\n\n` +
+            `🎯 *Trader:* \`${escapeMarkdownV2(state.targetWalletAddress)}\`\n\n` +
             `💰 *Allocated:* ${escapeMarkdownV2Amount(state.allocatedPercentage)}% \\(${escapeMarkdownV2Amount(allocatedAmount)} SOL\\)\n\n` +
             `⚡ *Mode:* Permissionless\n\n` +
             `━━━━━━━━━━━━━━━━━━━━━\n\n` +
@@ -539,7 +539,7 @@ copyTradingWizard.action("stop_copy_trade", async (ctx) => {
 
         await ctx.replyWithMarkdownV2(
             `✅ *Copy Trading Stopped*\n\n` +
-            `🎯 *Trader:* \`${escapeMarkdownV2(ct.targetWalletAddress.slice(0, 8))}...${escapeMarkdownV2(ct.targetWalletAddress.slice(-8))}\`\n\n` +
+            `🎯 *Trader:* \`${escapeMarkdownV2(ct.targetWalletAddress)}\`\n\n` +
             `The bot is no longer monitoring trades\\.\n\n` +
             `_Use /copytrade to start again_`,
             { ...DEFAULT_KEYBOARD }
