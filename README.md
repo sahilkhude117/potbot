@@ -1,12 +1,13 @@
-# PotBot - BONK Bot for Group Chats
+# PotBot - BONK Bot for Hedge Funds
 
 **Turning group chat into a *gamified hedge fund*** where chat members can contribute to shared pot of money.
 Capital is controlled by several members of the chat who have permission to trade.
 
 ## Key Features
 
-### **Shared Pot**
+### **Group Trading**
 - Members contribute to a collective fund controlled by smart contracts
+- Only Traders can trade.
 - Instant withdrawals.
 
 ### **Copy Trading**
