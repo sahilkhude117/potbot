@@ -8,7 +8,7 @@ import { CHECK_BALANCE_KEYBOARD, DEFAULT_KEYBOARD } from "../keyboards/keyboards
 import { PublicKey } from "@solana/web3.js";
 import { getPotPDA } from "../solana/smartContract";
 import { getAccount, getAssociatedTokenAddress } from "@solana/spl-token";
-import { getConnection } from "../solana/getConnection";
+import { getConnection, getExplorerUrl } from "../solana/getConnection";
 
 const connection = getConnection();
 
@@ -351,7 +351,7 @@ withdrawFromVaultWizard.action("wizard_confirm_withdrawal", async (ctx) => {
                 `*Shares Burned:* ${escapeMarkdownV2(withdrawal.sharesBurned.toString())}\n` +
                 `*Amount Received:* ${escapeMarkdownV2Amount(asset.amountReadable)} ${escapeMarkdownV2(symbol)}\n` +
                 `*Value:* \\~\\$${escapeMarkdownV2Amount(withdrawal.valueUSD)}\n\n` +
-                `🔗 [View Transaction](https://explorer.solana.com/tx/${signature}?cluster=devnet)\n\n` +
+                `🔗 [View Transaction](${escapeMarkdownV2(getExplorerUrl(signature))})\n\n` +
                 `💡 _Funds have been transferred on\\-chain to your wallet\\._`,
                 {
                     link_preview_options: { is_disabled: true },

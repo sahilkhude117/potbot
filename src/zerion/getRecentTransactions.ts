@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { getExplorerUrl } from '../solana/getConnection';
 
 const ZERION_API_BASE_URL = 'https://api.zerion.io';
 const ZERION_API_KEY_BS64 = process.env.ZERION_API_KEY_BS64;
@@ -161,7 +162,7 @@ function formatTransaction(tx: Transaction): FormattedTransaction {
 export function formatTransactionsMessage(
   transactions: FormattedTransaction[],
   walletAddress: string,
-  cluster: string = 'devnet'
+  cluster?: string
 ): string {
   if (transactions.length === 0) {
     return `*📊 Recent Transactions*\n\n` +
@@ -205,7 +206,7 @@ export function formatTransactionsMessage(
       });
     }
 
-    message += `┣ 🔗 [View Transaction](https://explorer.solana.com/tx/${tx.hash}?cluster=devnet)\n`;
+    message += `┣ 🔗 [View Transaction](${getExplorerUrl(tx.hash)})\n`;
 
     message += `┗ Date: \`${escapeMarkdownV2(tx.date)}\`\n`;
     

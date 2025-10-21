@@ -6,7 +6,7 @@ import { SOL_MINT } from "../lib/statits";
 import { decodeSecretKey, escapeMarkdownV2, escapeMarkdownV2Amount } from "../lib/utils";
 import { getBalanceMessage } from "../solana/getBalance";
 import { executeSwap, getQuote, swap } from "../solana/swapAssetsWithJup";
-import { getConnection } from "../solana/getConnection";
+import { getConnection, getExplorerUrl } from "../solana/getConnection";
 import { DEFAULT_KEYBOARD } from "../keyboards/keyboards";
 
 const connection = getConnection();
@@ -279,7 +279,7 @@ buyTokenWithSolWizard.action("wizard_confirm_buy", async (ctx) => {
                 `*Received:* ≈ ${escapeMarkdownV2Amount(outputAmountFormatted)} tokens\n` +
                 `*Value:* \\$${escapeMarkdownV2(parseFloat(usdValue).toFixed(4))}\n\n` +
                 `*Token:* \`${escapeMarkdownV2(state.tokenMint.substring(0, 12))}\\.\\.\\.\`\n\n` +
-                `🔗 [View on Solana Explorer](https://explorer.solana.com/tx/${escapeMarkdownV2(signature)})\n\n` +
+                `🔗 [View on Solana Explorer](${escapeMarkdownV2(getExplorerUrl(signature))})\n\n` +
                 `_Transaction confirmed\\!_`,
                 {
                     parse_mode: "MarkdownV2",

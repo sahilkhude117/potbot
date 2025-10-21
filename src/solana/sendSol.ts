@@ -1,5 +1,5 @@
 import { Keypair, LAMPORTS_PER_SOL, PublicKey, SystemProgram, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
-import { getConnection } from "./getConnection";
+import { getConnection, getExplorerUrl } from "./getConnection";
 
 const connection = getConnection();
 
@@ -30,10 +30,11 @@ export async function sendSol(
         transaction.sign([fromKeypair]);
 
         const txId = await connection.sendTransaction(transaction);
-        console.log(`https://explorer.solana.com/tx/${txId}?cluster=devnet`);
+        const explorerUrl = getExplorerUrl(txId);
+        console.log(explorerUrl);
         return {
             success: true,
-            message: `View Your Transaction here: https://explorer.solana.com/tx/${txId}?cluster=devnet`
+            message: `View Your Transaction here: ${explorerUrl}`
         }
     } catch (error) {
         return {

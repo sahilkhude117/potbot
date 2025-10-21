@@ -1,4 +1,5 @@
 import axios from "axios";
+import { getCluster } from "./getConnection";
 
 const JUP_URl = "https://lite-api.jup.ag";
 const SWAP_URL = "https://lite-api.jup.ag/swap/v1/swap";
@@ -11,6 +12,8 @@ export async function getQuote(
     quantity: number,
     userPublicKey: string
 ) {
+    const cluster = getCluster();
+    
     let quoteConfig = {
         method: 'get',
         maxBodyLength: Infinity,
@@ -28,6 +31,8 @@ export async function executeSwap(
     quoteResponse: any,
     userPublicKey: string
 ) {
+    const cluster = getCluster();
+    
     let config = {
         method: 'post',
         maxBodyLength: Infinity,
@@ -40,7 +45,7 @@ export async function executeSwap(
             quoteResponse: quoteResponse, 
             payer: userPublicKey, 
             userPublicKey: userPublicKey, 
-            cluster: "devnet"
+            cluster: cluster
         }
     };
 

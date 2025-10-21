@@ -19,6 +19,7 @@ import { computePotValueInUSD } from "./solana/computePotValueInUSD";
 import { getTokenDecimalsWithCache } from "./solana/getTokenDecimals";
 import { initializePotOnChain, addTraderOnChain, removeTraderOnChain} from "./solana/smartContract";
 import { getRecentTransactions, formatTransactionsMessage, formatAmount, getTypeEmoji } from "./zerion/getRecentTransactions";
+import { getExplorerUrl } from "./solana/getConnection";
 
 const bot = new Telegraf<BotContext>(process.env.TELEGRAM_BOT_TOKEN!)
 
@@ -210,7 +211,7 @@ async function recentTransactions(ctx: any) {
 
       await ctx.deleteMessage(loadingMsg.message_id);
 
-      const message = formatTransactionsMessage(transactions, existingUser.publicKey, 'devnet');
+      const message = formatTransactionsMessage(transactions, existingUser.publicKey);
       
       return ctx.replyWithMarkdownV2(message, {
           ...DEFAULT_KEYBOARD,
@@ -310,7 +311,7 @@ async function recentTrades(ctx: any) {
                   });
               }
 
-              message += `┣ 🔗 [View Transaction](https://explorer.solana.com/tx/${tx.hash}?cluster=devnet)\n`;
+              message += `┣ 🔗 [View Transaction](${getExplorerUrl(tx.hash)})\n`;
               message += `┗ Date: \`${escapeMarkdownV2(tx.date)}\`\n`;
               
               if (index < transactions.length - 1) {
@@ -994,7 +995,7 @@ bot.action("create_pot", async (ctx) => {
 
 *On\\-Chain Vault Address \\(PDA\\)*: \`${escapeMarkdownV2(potPDA.toBase58())}\`
 
-*Init Transaction*: 🔗 [View on Explorer](https://explorer.solana.com/tx/${escapeMarkdownV2(signature)}?cluster=devnet)${adminTraderSignature ? `\n\n*Admin Trader TX*: 🔗 [View on Explorer](https://explorer.solana.com/tx/${escapeMarkdownV2(adminTraderSignature)}?cluster=devnet)` : ''}\n\n
+*Init Transaction*: 🔗 [View on Explorer](${escapeMarkdownV2(getExplorerUrl(signature))})${adminTraderSignature ? `\n\n*Admin Trader TX*: 🔗 [View on Explorer](${escapeMarkdownV2(getExplorerUrl(adminTraderSignature))})` : ''}\n\n
 
 *Please follow these steps carefully:*
 

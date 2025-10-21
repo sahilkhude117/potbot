@@ -8,6 +8,7 @@ import { getPriceInUSD } from "../solana/getPriceInUSD";
 import { SOL_MINT } from "../lib/statits";
 import { computePotValueInUSD } from "../solana/computePotValueInUSD";
 import { DEFAULT_KEYBOARD } from "../keyboards/keyboards";
+import { getExplorerUrl } from "../solana/getConnection";
 
 export const depositSolToVaultWizard = new Scenes.WizardScene<BotContext>(
     'deposit_sol_to_vault_wizard',
@@ -263,7 +264,7 @@ depositSolToVaultWizard.action("wizard_confirm_deposit", async (ctx) => {
                 `*New Shares Minted:* ${escapeMarkdownV2(newShares.toString())} \\(${escapeMarkdownV2(newSharesPercentage)}%\\)\n` +
                 `*Your Total Shares:* ${escapeMarkdownV2(totalUserShares.toString())} \\(${escapeMarkdownV2(userPercentage)}%\\)\n` +
                 `*Pot Total Shares:* ${escapeMarkdownV2(totalPotShares.toString())}\n\n` +
-                `🔗 [View Transaction](https://explorer.solana.com/tx/${signature}?cluster=devnet)\n\n` +
+                `🔗 [View Transaction](${escapeMarkdownV2(getExplorerUrl(signature))})\n\n` +
                 `_Deposit recorded on\\-chain and in database\\._`,
                 {
                     link_preview_options: { is_disabled: true },

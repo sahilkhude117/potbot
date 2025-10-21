@@ -5,7 +5,7 @@ import { prismaClient } from "../db/prisma";
 import { decodeSecretKey, escapeMarkdownV2, escapeMarkdownV2Amount } from "../lib/utils";
 import { SOL_MINT } from "../lib/statits";
 import { executeSwap, getQuote } from "../solana/swapAssetsWithJup";
-import { getConnection } from "../solana/getConnection";
+import { getConnection, getExplorerUrl } from "../solana/getConnection";
 import { DEFAULT_GROUP_KEYBOARD } from "../keyboards/keyboards";
 
 const connection = getConnection();
@@ -545,7 +545,7 @@ buyTokenWithSolWizardGroup.action("wizard_confirm_group_buy", async (ctx) => {
                 `*Vault Received:* ≈ ${escapeMarkdownV2Amount(outputAmountFormatted)} tokens\n` +
                 `*Value:* \\$${escapeMarkdownV2(parseFloat(usdValue).toFixed(4))}\n\n` +
                 `*Token:* \`${escapeMarkdownV2(state.tokenMint.substring(0, 12))}\\.\\.\\.\`\n\n` +
-                `🔗 [View on Solana Explorer](https://explorer.solana.com/tx/${escapeMarkdownV2(swapSignature)})\n\n` +
+                `🔗 [View on Solana Explorer](${escapeMarkdownV2(getExplorerUrl(swapSignature))})\n\n` +
                 `_Trade recorded in pot ledger\\. Permissions revoked\\._`,
                 {
                     parse_mode: "MarkdownV2",

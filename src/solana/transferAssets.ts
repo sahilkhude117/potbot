@@ -1,7 +1,7 @@
 import { Keypair, PublicKey, SystemProgram, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
 import { SOL_MINT } from "../lib/statits";
 import { createAssociatedTokenAccountInstruction, createTransferInstruction, getAccount, getAssociatedTokenAddress, TOKEN_PROGRAM_ID } from "@solana/spl-token";
-import { getConnection } from "./getConnection";
+import { getConnection, getExplorerUrl } from "./getConnection";
 
 const connection = getConnection();
 
@@ -78,7 +78,7 @@ async function transferSOL(
         transaction.sign([fromKeypair]);
 
         const txId = await connection.sendTransaction(transaction);
-        console.log(`SOL Transfer: https://explorer.solana.com/tx/${txId}?cluster=devnet`);
+        console.log(`SOL Transfer: ${getExplorerUrl(txId)}`);
         
         return { success: true, txId }
     } catch (error: any) {
@@ -151,7 +151,7 @@ async function transferSPLToken(
 
         const txId = await connection.sendTransaction(transaction);
         
-        console.log(`Token Transfer: https://explorer.solana.com/tx/${txId}?cluster=devnet`);
+        console.log(`Token Transfer: ${getExplorerUrl(txId)}`);
         
         return { success: true, txId };
     } catch (error: any) {
