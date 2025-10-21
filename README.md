@@ -3,7 +3,7 @@
 **Turning group chat into a *gamified hedge fund*** where chat members can contribute to shared pot of money.
 Capital is controlled by several members of the chat who have permission to trade.
 
-## ✨ Key Features
+## Key Features
 
 ### **Shared Pot**
 - Members contribute to a collective fund controlled by smart contracts
