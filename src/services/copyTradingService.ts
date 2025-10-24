@@ -124,6 +124,18 @@ export class CopyTradingService {
             if (!sellTransfer || !buyTransfer) {
                 console.log(`❌ [SKIP] Trade ${tx.hash.slice(0, 8)}...${tx.hash.slice(-8)} doesn't have both sell and buy transfers`);
                 console.log(`   This might be a transfer, not a swap. Skipping silently.`);
+                
+                // Notify user about the skipped trade
+                let skipReason = '';
+                if (!sellTransfer && !buyTransfer) {
+                    skipReason = 'This transaction appears to be incomplete or not a token swap';
+                } else if (!sellTransfer) {
+                    skipReason = `You don't have the token being sold in this trade to copy it`;
+                } else if (!buyTransfer) {
+                    skipReason = `The token being bought couldn't be identified from this trade`;
+                }
+                
+                await this.notifyUserSkippedTrade(user, tx, skipReason);
                 return;
             }
 
