@@ -2,6 +2,7 @@ import { Keypair, PublicKey } from "@solana/web3.js";
 import { prismaClient } from "../db/prisma";
 import { SOLANA_POT_BOT_WITH_START_KEYBOARD } from "../keyboards/keyboards";
 import { removeTraderOnChain } from "../solana/smartContract";
+import { parseVaultAddress } from "../lib/walletManager";
 
 export async function removeTraderHandler(ctx: any) {
   try {
@@ -155,60 +156,102 @@ export async function removeTraderHandler(ctx: any) {
       return ctx.reply(`⚠️ ${targetUsername} is not a trader.`);
     }
 
-    try {
-      // Get admin user to access their private key
-      const adminUser = await prismaClient.user.findFirst({
-        where: { id: pot.adminId }
-      });
+    // Check which mode to use (wallet or smart contract)
+    const walletData = parseVaultAddress(pot.vaultAddress);
 
-      if (!adminUser) {
-        return ctx.reply("❌ Admin user not found.");
-      }
-
-      // Remove trader from the smart contract first
-      const potSeedPublicKey = new PublicKey(pot.potSeed);
-      const signature = await removeTraderOnChain(
-        adminUser.privateKey,
-        potSeedPublicKey,
-        targetUser.publicKey
-      );
-
-      // If on-chain transaction succeeds, update database
-      await prismaClient.pot_Member.update({
-        where: {
-          userId_potId: {
-            userId: targetUser.id,
-            potId: pot.id
-          }
-        },
-        data: {
-          role: "MEMBER"
-        }
-      });
-
-      await ctx.reply(
-        `❌ ${targetUsername} is no longer a trader in ${pot.name}.\n\n` +
-        `They have been changed to a regular member.\n\n` +
-        `🔗 Transaction: ${signature}`
-      );
-
+    if (walletData) {
+      // ===== WALLET MODE (Active) =====
+      // No on-chain transaction needed - just update database
       try {
-        await ctx.telegram.sendMessage(
-          parseInt(targetUserId),
-          `📢 Notice\n\n` +
-          `Your trader permissions in "${pot.name}" have been revoked.\n\n` +
-          `You are now a regular member.\n\n` +
-          `Transaction: ${signature}`
+        await prismaClient.pot_Member.update({
+          where: {
+            userId_potId: {
+              userId: targetUser.id,
+              potId: pot.id
+            }
+          },
+          data: {
+            role: "MEMBER"
+          }
+        });
+
+        await ctx.reply(
+          `❌ ${targetUsername} is no longer a trader in ${pot.name}.\n\n` +
+          `They have been changed to a regular member.`
         );
+
+        try {
+          await ctx.telegram.sendMessage(
+            parseInt(targetUserId),
+            `📢 Notice\n\n` +
+            `Your trader permissions in "${pot.name}" have been revoked.\n\n` +
+            `You are now a regular member.`
+          );
+        } catch (error) {
+          console.log(`Could not send DM to user ${targetUserId}`);
+        }
       } catch (error) {
-        console.log(`Could not send DM to user ${targetUserId}`);
+        console.error("Error removing trader:", error);
+        return ctx.reply("❌ Failed to remove trader. Please try again.");
       }
-    } catch (error) {
-      console.error("Error removing trader on-chain:", error);
-      return ctx.reply(
-        "❌ Failed to remove trader on blockchain. Please try again later.\n\n" +
-        "The database has not been updated."
-      );
+
+    } else {
+      // ===== SMART CONTRACT MODE (Fallback) =====
+      try {
+        // Get admin user to access their private key
+        const adminUser = await prismaClient.user.findFirst({
+          where: { id: pot.adminId }
+        });
+
+        if (!adminUser) {
+          return ctx.reply("❌ Admin user not found.");
+        }
+
+        // Remove trader from the smart contract first
+        const potSeedPublicKey = new PublicKey(pot.potSeed);
+        const signature = await removeTraderOnChain(
+          adminUser.privateKey,
+          potSeedPublicKey,
+          targetUser.publicKey
+        );
+
+        // If on-chain transaction succeeds, update database
+        await prismaClient.pot_Member.update({
+          where: {
+            userId_potId: {
+              userId: targetUser.id,
+              potId: pot.id
+            }
+          },
+          data: {
+            role: "MEMBER"
+          }
+        });
+
+        await ctx.reply(
+          `❌ ${targetUsername} is no longer a trader in ${pot.name}.\n\n` +
+          `They have been changed to a regular member.\n\n` +
+          `🔗 Transaction: ${signature}`
+        );
+
+        try {
+          await ctx.telegram.sendMessage(
+            parseInt(targetUserId),
+            `📢 Notice\n\n` +
+            `Your trader permissions in "${pot.name}" have been revoked.\n\n` +
+            `You are now a regular member.\n\n` +
+            `Transaction: ${signature}`
+          );
+        } catch (error) {
+          console.log(`Could not send DM to user ${targetUserId}`);
+        }
+      } catch (error) {
+        console.error("Error removing trader on-chain:", error);
+        return ctx.reply(
+          "❌ Failed to remove trader on blockchain. Please try again later.\n\n" +
+          "The database has not been updated."
+        );
+      }
     }
 
   } catch (error) {

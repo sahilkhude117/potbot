@@ -2,7 +2,7 @@ import { Markup, Scenes } from "telegraf";
 import type { BotContext, BuyTokenWizardState } from "../lib/types";
 import { prismaClient } from "../db/prisma";
 import { Keypair, LAMPORTS_PER_SOL, PublicKey, VersionedTransaction } from "@solana/web3.js";
-import { SOL_MINT } from "../lib/statits";
+import { SOL_MINT, MINIMUM_SOL_RESERVE } from "../lib/constants";
 import { decodeSecretKey, escapeMarkdownV2, escapeMarkdownV2Amount } from "../lib/utils";
 import { getBalanceMessage } from "../solana/getBalance";
 import { executeSwap, getQuote, swap } from "../solana/swapAssetsWithJup";
@@ -144,12 +144,13 @@ export const buyTokenWithSolWizard = new Scenes.WizardScene<BotContext>(
             return;
         }
 
-        const minReserve = 0.005;
-        if (quantity > state.balance - minReserve) {
+        if (quantity > state.balance - MINIMUM_SOL_RESERVE) {
             await ctx.replyWithMarkdownV2(
                 `❌ *Reserve SOL for Fees*\n\n` +
-                `Keep at least ${escapeMarkdownV2Amount(minReserve)} SOL for transaction fees\\.\n\n` +
-                `Maximum you can spend: ${escapeMarkdownV2Amount(state.balance - minReserve)} SOL`
+                `Keep at least ${escapeMarkdownV2Amount(MINIMUM_SOL_RESERVE)} SOL for transaction fees\\.\n\n` +
+                `*Your Balance:* ${escapeMarkdownV2Amount(state.balance)} SOL\n` +
+                `*Reserved:* ${escapeMarkdownV2Amount(MINIMUM_SOL_RESERVE)} SOL\n` +
+                `*Maximum you can spend:* ${escapeMarkdownV2Amount(Math.max(0, state.balance - MINIMUM_SOL_RESERVE))} SOL`
             );
             return;
         }

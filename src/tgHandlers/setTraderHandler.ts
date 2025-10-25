@@ -2,6 +2,7 @@ import { Keypair, PublicKey } from "@solana/web3.js";
 import { prismaClient } from "../db/prisma";
 import { SOLANA_POT_BOT_WITH_START_KEYBOARD } from "../keyboards/keyboards";
 import { addTraderOnChain } from "../solana/smartContract";
+import { parseVaultAddress } from "../lib/walletManager";
 
 export async function setTraderHandler(ctx: any) {
   try {
@@ -170,60 +171,102 @@ export async function setTraderHandler(ctx: any) {
       );
     }
 
-    try {
-      // Get admin user to access their private key
-      const adminUser = await prismaClient.user.findFirst({
-        where: { id: pot.adminId }
-      });
+    // Check which mode to use (wallet or smart contract)
+    const walletData = parseVaultAddress(pot.vaultAddress);
 
-      if (!adminUser) {
-        return ctx.reply("❌ Admin user not found.");
-      }
-
-      // Add trader on the smart contract first
-      const potSeedPublicKey = new PublicKey(pot.potSeed);
-      const signature = await addTraderOnChain(
-        adminUser.privateKey,
-        potSeedPublicKey,
-        targetUser.publicKey
-      );
-
-      // If on-chain transaction succeeds, update database
-      await prismaClient.pot_Member.update({
-        where: {
-          userId_potId: {
-            userId: targetUser.id,
-            potId: pot.id
-          }
-        },
-        data: {
-          role: "TRADER"
-        }
-      });
-
-      await ctx.reply(
-        `✅ ${targetUsername} is now a trader in ${pot.name}!\n\n` +
-        `They can now execute trades on behalf of the pot.\n\n` +
-        `🔗 Transaction: ${signature}`
-      );
-
+    if (walletData) {
+      // ===== WALLET MODE (Active) =====
+      // No on-chain transaction needed - just update database
       try {
-        await ctx.telegram.sendMessage(
-          parseInt(targetUserId),
-          `🎉 Congratulations!\n\n` +
-          `You've been granted trader permissions in "${pot.name}".\n\n` +
-          `You can now execute trades for the pot.\n\n` +
-          `Transaction: ${signature}`
+        await prismaClient.pot_Member.update({
+          where: {
+            userId_potId: {
+              userId: targetUser.id,
+              potId: pot.id
+            }
+          },
+          data: {
+            role: "TRADER"
+          }
+        });
+
+        await ctx.reply(
+          `✅ ${targetUsername} is now a trader in ${pot.name}!\n\n` +
+          `They can now execute trades on behalf of the pot.`
         );
+
+        try {
+          await ctx.telegram.sendMessage(
+            parseInt(targetUserId),
+            `🎉 Congratulations!\n\n` +
+            `You've been granted trader permissions in "${pot.name}".\n\n` +
+            `You can now execute trades for the pot.`
+          );
+        } catch (error) {
+          console.log(`Could not send DM to user ${targetUserId}`);
+        }
       } catch (error) {
-        console.log(`Could not send DM to user ${targetUserId}`);
+        console.error("Error setting trader:", error);
+        return ctx.reply("❌ Failed to set trader. Please try again.");
       }
-    } catch (error) {
-      console.error("Error adding trader on-chain:", error);
-      return ctx.reply(
-        "❌ Failed to add trader on blockchain. Please try again later.\n\n" +
-        "The database has not been updated."
-      );
+
+    } else {
+      // ===== SMART CONTRACT MODE (Fallback) =====
+      try {
+        // Get admin user to access their private key
+        const adminUser = await prismaClient.user.findFirst({
+          where: { id: pot.adminId }
+        });
+
+        if (!adminUser) {
+          return ctx.reply("❌ Admin user not found.");
+        }
+
+        // Add trader on the smart contract first
+        const potSeedPublicKey = new PublicKey(pot.potSeed);
+        const signature = await addTraderOnChain(
+          adminUser.privateKey,
+          potSeedPublicKey,
+          targetUser.publicKey
+        );
+
+        // If on-chain transaction succeeds, update database
+        await prismaClient.pot_Member.update({
+          where: {
+            userId_potId: {
+              userId: targetUser.id,
+              potId: pot.id
+            }
+          },
+          data: {
+            role: "TRADER"
+          }
+        });
+
+        await ctx.reply(
+          `✅ ${targetUsername} is now a trader in ${pot.name}!\n\n` +
+          `They can now execute trades on behalf of the pot.\n\n` +
+          `🔗 Transaction: ${signature}`
+        );
+
+        try {
+          await ctx.telegram.sendMessage(
+            parseInt(targetUserId),
+            `🎉 Congratulations!\n\n` +
+            `You've been granted trader permissions in "${pot.name}".\n\n` +
+            `You can now execute trades for the pot.\n\n` +
+            `Transaction: ${signature}`
+          );
+        } catch (error) {
+          console.log(`Could not send DM to user ${targetUserId}`);
+        }
+      } catch (error) {
+        console.error("Error adding trader on-chain:", error);
+        return ctx.reply(
+          "❌ Failed to add trader on blockchain. Please try again later.\n\n" +
+          "The database has not been updated."
+        );
+      }
     }
 
   } catch (error) {

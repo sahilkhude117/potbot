@@ -5,10 +5,13 @@ import type { BotContext, WithdrawalWizardState } from "../lib/types";
 import { escapeMarkdownV2, escapeMarkdownV2Amount } from "../lib/utils";
 import { getUserPosition } from "../solana/getUserPosition";
 import { CHECK_BALANCE_KEYBOARD, DEFAULT_KEYBOARD } from "../keyboards/keyboards";
-import { PublicKey } from "@solana/web3.js";
+import { Keypair, LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
 import { getPotPDA } from "../solana/smartContract";
-import { getAccount, getAssociatedTokenAddress } from "@solana/spl-token";
+import { getAccount, getAssociatedTokenAddress, transfer, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { getConnection, getExplorerUrl } from "../solana/getConnection";
+import { parseVaultAddress, walletDataToKeypair } from "../lib/walletManager";
+import { transferSol } from "../solana/transferSol";
+import { MINIMUM_SOL_RESERVE, MINIMUM_SOL_RESERVE_LAMPORTS } from "../lib/constants";
 
 const connection = getConnection();
 
@@ -143,13 +146,160 @@ export const withdrawFromVaultWizard = new Scenes.WizardScene<BotContext>(
         state.sharesToBurn = sharesToBurn;
 
         try {
+            // Get withdrawal preview first
             const preview = await getWithdrawalPreview(state.potId, state.userId, sharesToBurn);
-
             const asset = preview.assetToReturn;
             const symbol = asset.mintAddress === "So11111111111111111111111111111111111111112" 
                 ? "SOL" 
                 : asset.mintAddress.slice(0, 4) + "..." + asset.mintAddress.slice(-4);
 
+            // NOW check if pot has enough liquid balance
+            const pot = await prismaClient.pot.findUnique({
+                where: { id: state.potId },
+                include: { admin: true }
+            });
+
+            if (!pot) {
+                await ctx.reply("❌ Pot not found.");
+                return ctx.scene.leave();
+            }
+
+            const walletData = parseVaultAddress(pot.vaultAddress);
+            const requiredAmount = preview.assetToReturn.amount;
+
+            if (walletData) {
+                // === WALLET MODE - Check balance before showing confirmation ===
+                const potWalletPubkey = new PublicKey(walletData.publicKey);
+                const baseMint = new PublicKey(pot.cashOutMint);
+                const isSolWithdrawal = baseMint.toBase58() === "So11111111111111111111111111111111111111112";
+
+                if (isSolWithdrawal) {
+                    // Check SOL balance
+                    const vaultBalance = await connection.getBalance(potWalletPubkey);
+                    const availableForWithdrawal = BigInt(vaultBalance) - BigInt(MINIMUM_SOL_RESERVE_LAMPORTS);
+
+                    if (availableForWithdrawal < requiredAmount) {
+                        const vaultBalanceReadable = vaultBalance / LAMPORTS_PER_SOL;
+                        const availableReadable = Number(availableForWithdrawal) / LAMPORTS_PER_SOL;
+                        const requiredReadable = Number(requiredAmount) / LAMPORTS_PER_SOL;
+                        const maxWithdrawable = Math.max(0, availableReadable);
+
+                        // Calculate maximum withdrawable shares
+                        const maxWithdrawableLamports = availableForWithdrawal > 0 ? availableForWithdrawal : BigInt(0);
+                        const maxSharesCanWithdraw = pot.totalShares > 0 
+                            ? BigInt(Math.floor(Number(maxWithdrawableLamports) * Number(state.userShares) / Number(asset.amount)))
+                            : BigInt(0);
+
+                        await ctx.replyWithMarkdownV2(
+                            `❌ *Insufficient Liquid Balance*\n\n` +
+                            `The pot wallet has insufficient SOL for this withdrawal\\.\n\n` +
+                            `*Total Balance:* ${escapeMarkdownV2Amount(vaultBalanceReadable)} SOL\n` +
+                            `*Reserved \\(rent \\+ fees\\):* ${escapeMarkdownV2Amount(MINIMUM_SOL_RESERVE)} SOL\n` +
+                            `*Available:* ${escapeMarkdownV2Amount(maxWithdrawable)} SOL\n` +
+                            `*You requested:* ${escapeMarkdownV2Amount(requiredReadable)} SOL\n\n` +
+                            `💡 _A minimum of ${escapeMarkdownV2Amount(MINIMUM_SOL_RESERVE)} SOL must remain in the wallet for rent\\-exemption and transaction fees\\._\n\n` +
+                            `✅ *You can withdraw up to ${escapeMarkdownV2Amount(maxWithdrawable)} SOL*\n` +
+                            `   \\(≈ ${escapeMarkdownV2(maxSharesCanWithdraw.toString())} shares\\)\n\n` +
+                            `🔄 _Try entering a smaller amount or ask traders to sell other assets for more liquidity\\._`,
+                            Markup.inlineKeyboard([
+                                [Markup.button.callback("Cancel", "wizard_cancel_withdrawal")]
+                            ])
+                        );
+                        return; // Stay on same step - user can enter a new amount
+                    }
+                } else {
+                    // Check SPL token balance
+                    const potTokenAccount = await getAssociatedTokenAddress(
+                        baseMint,
+                        potWalletPubkey
+                    );
+
+                    let vaultBalance = BigInt(0);
+                    try {
+                        const vaultAccount = await getAccount(connection, potTokenAccount);
+                        vaultBalance = vaultAccount.amount;
+                    } catch (e) {
+                        console.error("Vault token account not found:", e);
+                    }
+
+                    if (vaultBalance < requiredAmount) {
+                        const decimals = await getTokenDecimalsWithCache(baseMint.toBase58());
+                        const vaultBalanceReadable = Number(vaultBalance) / (10 ** decimals);
+                        const requiredReadable = Number(requiredAmount) / (10 ** decimals);
+
+                        // Calculate maximum withdrawable shares
+                        const maxSharesCanWithdraw = pot.totalShares > 0 && asset.amount > 0
+                            ? BigInt(Math.floor(Number(vaultBalance) * Number(state.userShares) / Number(asset.amount)))
+                            : BigInt(0);
+
+                        await ctx.replyWithMarkdownV2(
+                            `❌ *Insufficient Liquid Balance*\n\n` +
+                            `The pot wallet has insufficient ${escapeMarkdownV2(symbol)} for this withdrawal\\.\n\n` +
+                            `*Available:* ${escapeMarkdownV2Amount(vaultBalanceReadable)} ${escapeMarkdownV2(symbol)}\n` +
+                            `*You requested:* ${escapeMarkdownV2Amount(requiredReadable)} ${escapeMarkdownV2(symbol)}\n\n` +
+                            `💡 _Traders must sell other assets to increase the ${escapeMarkdownV2(symbol)} balance before you can withdraw\\._\n\n` +
+                            `✅ *You can withdraw up to ${escapeMarkdownV2Amount(vaultBalanceReadable)} ${escapeMarkdownV2(symbol)}*\n` +
+                            `   \\(≈ ${escapeMarkdownV2(maxSharesCanWithdraw.toString())} shares\\)\n\n` +
+                            `🔄 _Try entering a smaller amount or ask traders to rebalance the portfolio\\._`,
+                            Markup.inlineKeyboard([
+                                [Markup.button.callback("Cancel", "wizard_cancel_withdrawal")]
+                            ])
+                        );
+                        return; // Stay on same step
+                    }
+                }
+            } else {
+                // === SMART CONTRACT MODE - Check balance ===
+                const adminPubkey = new PublicKey(pot.admin?.publicKey || '');
+                const potSeedPublicKey = new PublicKey(pot.potSeed);
+                const [potPda] = getPotPDA(adminPubkey, potSeedPublicKey);
+                
+                const baseMint = new PublicKey(pot.cashOutMint);
+                const potVaultAta = await getAssociatedTokenAddress(
+                    baseMint,
+                    potPda,
+                    true
+                );
+
+                let vaultBalance = BigInt(0);
+                try {
+                    const vaultAccount = await getAccount(connection, potVaultAta);
+                    vaultBalance = vaultAccount.amount;
+                } catch (e) {
+                    console.error("Vault account not found:", e);
+                }
+
+                if (vaultBalance < requiredAmount) {
+                    const decimals = await getTokenDecimalsWithCache(baseMint.toBase58());
+                    const vaultBalanceReadable = Number(vaultBalance) / (10 ** decimals);
+                    const requiredReadable = Number(requiredAmount) / (10 ** decimals);
+
+                    const isSol = baseMint.toBase58() === "So11111111111111111111111111111111111111112";
+                    const symbol = isSol ? "SOL" : baseMint.toBase58().slice(0, 4) + "..." + baseMint.toBase58().slice(-4);
+
+                    // Calculate maximum withdrawable shares
+                    const maxSharesCanWithdraw = pot.totalShares > 0 && asset.amount > 0
+                        ? BigInt(Math.floor(Number(vaultBalance) * Number(state.userShares) / Number(asset.amount)))
+                        : BigInt(0);
+
+                    await ctx.replyWithMarkdownV2(
+                        `❌ *Insufficient Liquid Balance*\n\n` +
+                        `The pot vault has insufficient ${escapeMarkdownV2(symbol)} for this withdrawal\\.\n\n` +
+                        `*Available:* ${escapeMarkdownV2Amount(vaultBalanceReadable)} ${escapeMarkdownV2(symbol)}\n` +
+                        `*You requested:* ${escapeMarkdownV2Amount(requiredReadable)} ${escapeMarkdownV2(symbol)}\n\n` +
+                        `💡 _Traders must sell other assets to increase the ${escapeMarkdownV2(symbol)} balance before you can withdraw\\._\n\n` +
+                        `✅ *You can withdraw up to ${escapeMarkdownV2Amount(vaultBalanceReadable)} ${escapeMarkdownV2(symbol)}*\n` +
+                        `   \\(≈ ${escapeMarkdownV2(maxSharesCanWithdraw.toString())} shares\\)\n\n` +
+                        `🔄 _Try entering a smaller amount or ask traders to rebalance the portfolio\\._`,
+                        Markup.inlineKeyboard([
+                            [Markup.button.callback("Cancel", "wizard_cancel_withdrawal")]
+                        ])
+                    );
+                    return; // Stay on same step
+                }
+            }
+
+            // If we reach here, balance is sufficient - show confirmation
             await ctx.replyWithMarkdownV2(
                 `💰 *Withdrawal Confirmation*\n\n` +
                 `*Pot:* ${escapeMarkdownV2(state.potName)}\n` +
@@ -269,114 +419,286 @@ withdrawFromVaultWizard.action("wizard_confirm_withdrawal", async (ctx) => {
             return ctx.scene.leave();
         }
 
-        // Check liquid SOL balance on-chain before proceeding
-       
-        const adminPubkey = new PublicKey(pot.admin.publicKey);
-        const potSeedPublicKey = new PublicKey(pot.potSeed);
-        const [potPda] = getPotPDA(adminPubkey, potSeedPublicKey);
-        
-        // Get base mint from pot (cashOutMint or default to SOL)
-        const baseMint = new PublicKey(pot.cashOutMint);
-        const potVaultAta = await getAssociatedTokenAddress(
-            baseMint,
-            potPda,
-            true
-        );
+        // Check which mode to use (wallet or smart contract)
+        const walletData = parseVaultAddress(pot.vaultAddress);
 
-        let vaultBalance = BigInt(0);
-        try {
-            const vaultAccount = await getAccount(connection, potVaultAta);
-            vaultBalance = vaultAccount.amount;
-        } catch (e) {
-            console.error("Vault account not found:", e);
-        }
+        if (walletData) {
+            // ===== WALLET MODE (Active) =====
+            await ctx.editMessageText("⏳ Processing wallet withdrawal...");
 
-        // Calculate required amount for withdrawal
-        const preview = await getWithdrawalPreview(potId, userId, sharesToBurn);
-        const requiredAmount = preview.assetToReturn.amount;
+            try {
+                // Get pot wallet keypair
+                const potKeypair = walletDataToKeypair(walletData);
+                const potWalletPubkey = new PublicKey(walletData.publicKey);
 
-        if (vaultBalance < requiredAmount) {
-            await ctx.deleteMessage(processingMsg.message_id);
-            
-            const decimals = await getTokenDecimalsWithCache(baseMint.toBase58());
-            const vaultBalanceReadable = Number(vaultBalance) / (10 ** decimals);
-            const requiredReadable = Number(requiredAmount) / (10 ** decimals);
-            
-            const symbol = baseMint.toBase58() === "So11111111111111111111111111111111111111112"
-                ? "SOL"
-                : baseMint.toBase58().slice(0, 4) + "..." + baseMint.toBase58().slice(-4);
+                // Get base mint from pot (cashOutMint or default to SOL)
+                const baseMint = new PublicKey(pot.cashOutMint);
+                const userPubkey = new PublicKey(user.publicKey);
 
-            await ctx.replyWithMarkdownV2(
-                `❌ *Insufficient Liquid Balance*\n\n` +
-                `The pot vault has insufficient ${escapeMarkdownV2(symbol)} for this withdrawal\\.\n\n` +
-                `*Required:* ${escapeMarkdownV2Amount(requiredReadable)} ${escapeMarkdownV2(symbol)}\n` +
-                `*Available:* ${escapeMarkdownV2Amount(vaultBalanceReadable)} ${escapeMarkdownV2(symbol)}\n\n` +
-                `💡 _Traders must sell other assets to increase the ${escapeMarkdownV2(symbol)} balance before you can withdraw\\._\n\n` +
-                `🔄 _Try withdrawing a smaller percentage or ask traders to rebalance the portfolio\\._`,
-                {
-                    ...CHECK_BALANCE_KEYBOARD
+                // Calculate required amount for withdrawal
+                const preview = await getWithdrawalPreview(potId, userId, sharesToBurn);
+                const requiredAmount = preview.assetToReturn.amount;
+
+                let signature: string;
+                let amountReceived: bigint;
+
+                // Check if withdrawing SOL or SPL token
+                const isSolWithdrawal = baseMint.toBase58() === "So11111111111111111111111111111111111111112";
+
+                if (isSolWithdrawal) {
+                    // SOL withdrawal
+                    const vaultBalance = await connection.getBalance(potWalletPubkey);
+                    
+                    // Reserve for rent-exemption and transaction fees
+                    // Minimum rent exemption for account (~0.00089 SOL) + transaction fee buffer (~0.001 SOL) + safety margin
+                    const availableForWithdrawal = BigInt(vaultBalance) - BigInt(MINIMUM_SOL_RESERVE_LAMPORTS);
+                    
+                    if (availableForWithdrawal < requiredAmount) {
+                        await ctx.deleteMessage(processingMsg.message_id);
+                        
+                        const decimals = 9; // SOL decimals
+                        const vaultBalanceReadable = vaultBalance / LAMPORTS_PER_SOL;
+                        const availableReadable = Number(availableForWithdrawal) / LAMPORTS_PER_SOL;
+                        const requiredReadable = Number(requiredAmount) / LAMPORTS_PER_SOL;
+
+                        // Calculate maximum withdrawable amount
+                        const maxWithdrawable = Math.max(0, availableReadable);
+
+                        await ctx.replyWithMarkdownV2(
+                            `❌ *Insufficient Liquid Balance*\n\n` +
+                            `The pot wallet has insufficient SOL for this withdrawal\\.\n\n` +
+                            `*Total Balance:* ${escapeMarkdownV2Amount(vaultBalanceReadable)} SOL\n` +
+                            `*Reserved \\(rent \\+ fees\\):* ${escapeMarkdownV2Amount(MINIMUM_SOL_RESERVE)} SOL\n` +
+                            `*Available:* ${escapeMarkdownV2Amount(maxWithdrawable)} SOL\n` +
+                            `*You requested:* ${escapeMarkdownV2Amount(requiredReadable)} SOL\n\n` +
+                            `💡 _A minimum of ${escapeMarkdownV2Amount(MINIMUM_SOL_RESERVE)} SOL must remain in the wallet for rent\\-exemption and transaction fees\\._\n\n` +
+                            `✅ *You can withdraw up to ${escapeMarkdownV2Amount(maxWithdrawable)} SOL*\n\n` +
+                            `🔄 _Try withdrawing a smaller percentage or ask traders to sell other assets for more liquidity\\._`,
+                            {
+                                ...CHECK_BALANCE_KEYBOARD
+                            }
+                        );
+                        return ctx.scene.leave();
+                    }
+
+                    // Transfer SOL from pot wallet to user
+                    const amountSol = Number(requiredAmount) / LAMPORTS_PER_SOL;
+                    const transferResult = await transferSol(potKeypair, userPubkey, amountSol);
+                    
+                    if (!transferResult.success) {
+                        throw new Error(transferResult.message);
+                    }
+                    
+                    signature = transferResult.signature || '';
+                    amountReceived = requiredAmount;
+
+                } else {
+                    // SPL Token withdrawal
+                    const potTokenAccount = await getAssociatedTokenAddress(
+                        baseMint,
+                        potWalletPubkey
+                    );
+
+                    let vaultBalance = BigInt(0);
+                    try {
+                        const vaultAccount = await getAccount(connection, potTokenAccount);
+                        vaultBalance = vaultAccount.amount;
+                    } catch (e) {
+                        console.error("Vault token account not found:", e);
+                    }
+
+                    if (vaultBalance < requiredAmount) {
+                        await ctx.deleteMessage(processingMsg.message_id);
+                        
+                        const decimals = await getTokenDecimalsWithCache(baseMint.toBase58());
+                        const vaultBalanceReadable = Number(vaultBalance) / (10 ** decimals);
+                        const requiredReadable = Number(requiredAmount) / (10 ** decimals);
+                        
+                        const symbol = baseMint.toBase58().slice(0, 4) + "..." + baseMint.toBase58().slice(-4);
+
+                        await ctx.replyWithMarkdownV2(
+                            `❌ *Insufficient Liquid Balance*\n\n` +
+                            `The pot wallet has insufficient ${escapeMarkdownV2(symbol)} for this withdrawal\\.\n\n` +
+                            `*Required:* ${escapeMarkdownV2Amount(requiredReadable)} ${escapeMarkdownV2(symbol)}\n` +
+                            `*Available:* ${escapeMarkdownV2Amount(vaultBalanceReadable)} ${escapeMarkdownV2(symbol)}\n\n` +
+                            `💡 _Traders must sell other assets to increase the ${escapeMarkdownV2(symbol)} balance before you can withdraw\\._\n\n` +
+                            `🔄 _Try withdrawing a smaller percentage or ask traders to rebalance the portfolio\\._`,
+                            {
+                                ...CHECK_BALANCE_KEYBOARD
+                            }
+                        );
+                        return ctx.scene.leave();
+                    }
+
+                    // Transfer SPL token from pot wallet to user
+                    const userTokenAccount = await getAssociatedTokenAddress(
+                        baseMint,
+                        userPubkey
+                    );
+
+                    // Transfer tokens
+                    signature = await transfer(
+                        connection,
+                        potKeypair, // payer
+                        potTokenAccount, // source
+                        userTokenAccount, // destination
+                        potKeypair, // owner
+                        requiredAmount
+                    );
+                    amountReceived = requiredAmount;
                 }
-            );
-            return ctx.scene.leave();
-        }
 
-        // Proceed with withdrawal if sufficient balance
-        await ctx.editMessageText("⏳ Processing on-chain withdrawal...");
+                // After successful transfer, update database
+                const withdrawal = await burnSharesAndWithdraw(potId, userId, sharesToBurn);
 
-        // Import smart contract functions
-        const { redeemFromPot } = await import("../solana/smartContract");
+                const asset = withdrawal.assetToReturn;
+                const symbol = asset.mintAddress === "So11111111111111111111111111111111111111112"
+                    ? "SOL"
+                    : asset.mintAddress.slice(0, 4) + "..." + asset.mintAddress.slice(-4);
 
-        try {
-            // Call smart contract redeem function with pot seed
-            const { signature, amountReceived } = await redeemFromPot(
-                user.privateKey,
-                pot.admin.publicKey,
-                potSeedPublicKey,
-                sharesToBurn,
-                baseMint
-            );
+                await ctx.deleteMessage(processingMsg.message_id);
+                
+                await ctx.replyWithMarkdownV2(
+                    `✅ *Withdrawal Complete\\!*\n\n` +
+                    `*Shares Burned:* ${escapeMarkdownV2(withdrawal.sharesBurned.toString())}\n` +
+                    `*Amount Received:* ${escapeMarkdownV2Amount(asset.amountReadable)} ${escapeMarkdownV2(symbol)}\n` +
+                    `*Value:* \\~\\$${escapeMarkdownV2Amount(withdrawal.valueUSD)}\n\n` +
+                    `🔗 [View Transaction](${escapeMarkdownV2(getExplorerUrl(signature))})\n\n` +
+                    `💡 _Funds have been transferred to your wallet\\._`,
+                    {
+                        link_preview_options: { is_disabled: true },
+                        ...DEFAULT_KEYBOARD
+                    }
+                );
 
-            // After successful on-chain redemption, update database
-            const withdrawal = await burnSharesAndWithdraw(potId, userId, sharesToBurn);
-
-            const asset = withdrawal.assetToReturn;
-            const symbol = asset.mintAddress === "So11111111111111111111111111111111111111112"
-                ? "SOL"
-                : asset.mintAddress.slice(0, 4) + "..." + asset.mintAddress.slice(-4);
-
-            await ctx.deleteMessage(processingMsg.message_id);
-            
-            await ctx.replyWithMarkdownV2(
-                `✅ *Withdrawal Complete\\!*\n\n` +
-                `*Shares Burned:* ${escapeMarkdownV2(withdrawal.sharesBurned.toString())}\n` +
-                `*Amount Received:* ${escapeMarkdownV2Amount(asset.amountReadable)} ${escapeMarkdownV2(symbol)}\n` +
-                `*Value:* \\~\\$${escapeMarkdownV2Amount(withdrawal.valueUSD)}\n\n` +
-                `🔗 [View Transaction](${escapeMarkdownV2(getExplorerUrl(signature))})\n\n` +
-                `💡 _Funds have been transferred on\\-chain to your wallet\\._`,
-                {
-                    link_preview_options: { is_disabled: true },
-                    ...DEFAULT_KEYBOARD
-                }
-            );
-        } catch (e: any) {
-            console.error("Withdrawal error:", e);
-            await ctx.deleteMessage(processingMsg.message_id);
-            
-            let errorMessage = e.message || 'Unknown error';
-            
-            // Check if error is due to insufficient vault balance
-            if (errorMessage.includes('insufficient') || errorMessage.includes('balance')) {
-                errorMessage = "Insufficient liquid balance in vault. Traders need to sell other assets to increase base asset balance.";
+            } catch (e: any) {
+                console.error("Wallet withdrawal error:", e);
+                await ctx.deleteMessage(processingMsg.message_id);
+                
+                let errorMessage = e.message || 'Unknown error';
+                
+                await ctx.replyWithMarkdownV2(
+                    `❌ *Withdrawal Failed*\n\n` +
+                    `⚠️ ${escapeMarkdownV2(errorMessage)}\n\n` +
+                    `Please try again or contact support\\.`,
+                    {
+                        ...DEFAULT_KEYBOARD
+                    }
+                );
             }
+
+        } else {
+            // ===== SMART CONTRACT MODE (Fallback) =====
+            await ctx.editMessageText("⏳ Checking vault liquidity...");
+
+            // Check liquid SOL balance on-chain before proceeding
+            const adminPubkey = new PublicKey(pot.admin.publicKey);
+            const potSeedPublicKey = new PublicKey(pot.potSeed);
+            const [potPda] = getPotPDA(adminPubkey, potSeedPublicKey);
             
-            await ctx.replyWithMarkdownV2(
-                `❌ *Withdrawal Failed*\n\n` +
-                `⚠️ ${escapeMarkdownV2(errorMessage)}\n\n` +
-                `Please try again or contact support\\.`,
-                {
-                    ...DEFAULT_KEYBOARD
-                }
+            // Get base mint from pot (cashOutMint or default to SOL)
+            const baseMint = new PublicKey(pot.cashOutMint);
+            const potVaultAta = await getAssociatedTokenAddress(
+                baseMint,
+                potPda,
+                true
             );
+
+            let vaultBalance = BigInt(0);
+            try {
+                const vaultAccount = await getAccount(connection, potVaultAta);
+                vaultBalance = vaultAccount.amount;
+            } catch (e) {
+                console.error("Vault account not found:", e);
+            }
+
+            // Calculate required amount for withdrawal
+            const preview = await getWithdrawalPreview(potId, userId, sharesToBurn);
+            const requiredAmount = preview.assetToReturn.amount;
+
+            if (vaultBalance < requiredAmount) {
+                await ctx.deleteMessage(processingMsg.message_id);
+                
+                const decimals = await getTokenDecimalsWithCache(baseMint.toBase58());
+                const vaultBalanceReadable = Number(vaultBalance) / (10 ** decimals);
+                const requiredReadable = Number(requiredAmount) / (10 ** decimals);
+                
+                const symbol = baseMint.toBase58() === "So11111111111111111111111111111111111111112"
+                    ? "SOL"
+                    : baseMint.toBase58().slice(0, 4) + "..." + baseMint.toBase58().slice(-4);
+
+                await ctx.replyWithMarkdownV2(
+                    `❌ *Insufficient Liquid Balance*\n\n` +
+                    `The pot vault has insufficient ${escapeMarkdownV2(symbol)} for this withdrawal\\.\n\n` +
+                    `*Required:* ${escapeMarkdownV2Amount(requiredReadable)} ${escapeMarkdownV2(symbol)}\n` +
+                    `*Available:* ${escapeMarkdownV2Amount(vaultBalanceReadable)} ${escapeMarkdownV2(symbol)}\n\n` +
+                    `💡 _Traders must sell other assets to increase the ${escapeMarkdownV2(symbol)} balance before you can withdraw\\._\n\n` +
+                    `🔄 _Try withdrawing a smaller percentage or ask traders to rebalance the portfolio\\._`,
+                    {
+                        ...CHECK_BALANCE_KEYBOARD
+                    }
+                );
+                return ctx.scene.leave();
+            }
+
+            // Proceed with withdrawal if sufficient balance
+            await ctx.editMessageText("⏳ Processing on-chain withdrawal...");
+
+            // Import smart contract functions
+            const { redeemFromPot } = await import("../solana/smartContract");
+
+            try {
+                // Call smart contract redeem function with pot seed
+                const { signature, amountReceived } = await redeemFromPot(
+                    user.privateKey,
+                    pot.admin.publicKey,
+                    potSeedPublicKey,
+                    sharesToBurn,
+                    baseMint
+                );
+
+                // After successful on-chain redemption, update database
+                const withdrawal = await burnSharesAndWithdraw(potId, userId, sharesToBurn);
+
+                const asset = withdrawal.assetToReturn;
+                const symbol = asset.mintAddress === "So11111111111111111111111111111111111111112"
+                    ? "SOL"
+                    : asset.mintAddress.slice(0, 4) + "..." + asset.mintAddress.slice(-4);
+
+                await ctx.deleteMessage(processingMsg.message_id);
+                
+                await ctx.replyWithMarkdownV2(
+                    `✅ *Withdrawal Complete\\!*\n\n` +
+                    `*Shares Burned:* ${escapeMarkdownV2(withdrawal.sharesBurned.toString())}\n` +
+                    `*Amount Received:* ${escapeMarkdownV2Amount(asset.amountReadable)} ${escapeMarkdownV2(symbol)}\n` +
+                    `*Value:* \\~\\$${escapeMarkdownV2Amount(withdrawal.valueUSD)}\n\n` +
+                    `🔗 [View Transaction](${escapeMarkdownV2(getExplorerUrl(signature))})\n\n` +
+                    `💡 _Funds have been transferred on\\-chain to your wallet\\._`,
+                    {
+                        link_preview_options: { is_disabled: true },
+                        ...DEFAULT_KEYBOARD
+                    }
+                );
+            } catch (e: any) {
+                console.error("Withdrawal error:", e);
+                await ctx.deleteMessage(processingMsg.message_id);
+                
+                let errorMessage = e.message || 'Unknown error';
+                
+                // Check if error is due to insufficient vault balance
+                if (errorMessage.includes('insufficient') || errorMessage.includes('balance')) {
+                    errorMessage = "Insufficient liquid balance in vault. Traders need to sell other assets to increase base asset balance.";
+                }
+                
+                await ctx.replyWithMarkdownV2(
+                    `❌ *Withdrawal Failed*\n\n` +
+                    `⚠️ ${escapeMarkdownV2(errorMessage)}\n\n` +
+                    `Please try again or contact support\\.`,
+                    {
+                        ...DEFAULT_KEYBOARD
+                    }
+                );
+            }
         }
     } catch (error: any) {
         console.error(error);

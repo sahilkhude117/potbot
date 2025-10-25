@@ -1,10 +1,11 @@
 import { PublicKey } from "@solana/web3.js";
 import { prismaClient } from "../db/prisma";
-import { createPotSeed } from "../solana/createVault";
+import { createPotSeed, createPotVault } from "../solana/createVault";
 import { addTraderOnChain, initializePotOnChain } from "../solana/smartContract";
 import { escapeMarkdownV2 } from "../lib/utils";
 import { getExplorerUrl } from "../solana/getConnection";
 import { ADD_POTBOT_TO_GROUP_WITH_DONE } from "../keyboards/keyboards";
+import { serializeWalletData } from "../lib/walletManager";
 
  export async function createPotHandler(ctx: any) {
   const existingUser = await prismaClient.user.findFirst({
@@ -15,6 +16,51 @@ import { ADD_POTBOT_TO_GROUP_WITH_DONE } from "../keyboards/keyboards";
 
   if (existingUser) {
     try {
+      // ========================================
+      // WALLET MODE (Active for Testing)
+      // ========================================
+      // Create a direct wallet for the pot
+      const potWallet = createPotVault();
+      const potSeed = createPotSeed(); // Still need seed for unique identifier
+      
+      // Store wallet as JSON in vaultAddress field
+      const vaultAddressData = serializeWalletData(potWallet);
+
+      // Create pot in database
+      const pot = await prismaClient.pot.create({
+        data: {
+            name: "",
+            adminId: existingUser.id,
+            telegramGroupId: `telegramGroupId_${ctx.from.id}_${Date.now()}`,
+            vaultAddress: vaultAddressData, // JSON wallet data
+            potSeed: potSeed.publicKey, // Unique seed for this pot
+            isGroupAdded: false
+        }
+      });
+
+      await ctx.replyWithMarkdownV2(
+        `*✅ Created Pot Successfully*\\.
+
+*Pot Id*: ${escapeMarkdownV2(pot.id)}
+
+*Pot Wallet Address*: \`${escapeMarkdownV2(potWallet.publicKey)}\`
+
+*Please follow these steps carefully:*
+
+*Step 1:* *Create a new group* in Telegram manually \\(open Telegram \\> tap pencil icon \\> New Group \\> add members \\> create\\)\\.
+
+*Step 2:* After creating the group, *click the button below* to join me in the group\\.
+
+*Note:* You *must first create the group* before clicking the button below\\.`, {
+        parse_mode: "MarkdownV2",
+        link_preview_options: { is_disabled: true },
+        ...ADD_POTBOT_TO_GROUP_WITH_DONE
+      });
+
+      // ========================================
+      // SMART CONTRACT MODE (Commented for fallback)
+      // ========================================
+      /*
       const potSeed = createPotSeed();
       const potSeedPublicKey = new PublicKey(potSeed.publicKey);
 
@@ -37,23 +83,21 @@ import { ADD_POTBOT_TO_GROUP_WITH_DONE } from "../keyboards/keyboards";
         console.log(`✅ Admin added as trader on-chain: ${adminTraderSignature}`);
       } catch (traderError) {
         console.error("⚠️ Failed to add admin as trader:", traderError);
-        // Continue with pot creation even if this fails - admin can be added later
       }
 
-      // Create pot in database with PDA as vault address and pot seed
       const pot = await prismaClient.pot.create({
         data: {
             name: "",
             adminId: existingUser.id,
-            telegramGroupId: `telegramGroupId_${ctx.from.id}_${Date.now()}`, // Use timestamp for uniqueness
-            vaultAddress: potPDA.toBase58(), // Store the on-chain PDA address
-            potSeed: potSeed.publicKey, // Store the unique seed for this pot
+            telegramGroupId: `telegramGroupId_${ctx.from.id}_${Date.now()}`,
+            vaultAddress: potPDA.toBase58(),
+            potSeed: potSeed.publicKey,
             isGroupAdded: false
         }
-      })
+      });
 
       await ctx.replyWithMarkdownV2(
-      `*Created Pot Successfully*\\.
+        `*Created Pot Successfully*\\.
 
 *Pot Id*: ${escapeMarkdownV2(pot.id)}
 
@@ -71,11 +115,11 @@ import { ADD_POTBOT_TO_GROUP_WITH_DONE } from "../keyboards/keyboards";
         parse_mode: "MarkdownV2",
         link_preview_options: { is_disabled: true },
         ...ADD_POTBOT_TO_GROUP_WITH_DONE
-      }
-    );
+      });
+      */
     } catch (error) {
       console.error("Error creating pot:", error);
-      await ctx.reply("❌ Failed to create pot on blockchain. Please try again later.");
+      await ctx.reply("❌ Failed to create pot. Please try again later.");
     }
   }
 }

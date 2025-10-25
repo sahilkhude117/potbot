@@ -1,14 +1,16 @@
 import { Markup, Scenes } from "telegraf";
 import { prismaClient } from "../db/prisma";
 import { decodeSecretKey, escapeMarkdownV2, escapeMarkdownV2Amount } from "../lib/utils";
-import { Keypair, LAMPORTS_PER_SOL } from "@solana/web3.js";
+import { Keypair, LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
 import { getBalanceMessage } from "../solana/getBalance";
 import type { BotContext, DepositWizardState } from "../lib/types";
 import { getPriceInUSD } from "../solana/getPriceInUSD";
-import { SOL_MINT } from "../lib/statits";
+import { SOL_MINT, MINIMUM_SOL_RESERVE } from "../lib/constants";
 import { computePotValueInUSD } from "../solana/computePotValueInUSD";
 import { DEFAULT_KEYBOARD } from "../keyboards/keyboards";
 import { getExplorerUrl } from "../solana/getConnection";
+import { parseVaultAddress, walletDataToKeypair } from "../lib/walletManager";
+import { transferSol } from "../solana/transferSol";
 
 export const depositSolToVaultWizard = new Scenes.WizardScene<BotContext>(
     'deposit_sol_to_vault_wizard',
@@ -118,12 +120,13 @@ export const depositSolToVaultWizard = new Scenes.WizardScene<BotContext>(
             return;
         }
 
-        const minReserve = 0.005;
-        if (amount > state.userBalance - minReserve) {
+        if (amount > state.userBalance - MINIMUM_SOL_RESERVE) {
             await ctx.replyWithMarkdownV2(
                 `❌ *Reserve SOL for Fees*\n\n` +
-                `Keep at least ${escapeMarkdownV2Amount(minReserve)} SOL for transaction fees\\.\n\n` +
-                `Maximum you can deposit: ${escapeMarkdownV2Amount(state.userBalance - minReserve)} SOL`
+                `Keep at least ${escapeMarkdownV2Amount(MINIMUM_SOL_RESERVE)} SOL for transaction fees\\.\n\n` +
+                `*Your Balance:* ${escapeMarkdownV2Amount(state.userBalance)} SOL\n` +
+                `*Reserved:* ${escapeMarkdownV2Amount(MINIMUM_SOL_RESERVE)} SOL\n` +
+                `*Maximum you can deposit:* ${escapeMarkdownV2Amount(Math.max(0, state.userBalance - MINIMUM_SOL_RESERVE))} SOL`
             );
             return;
         }
@@ -210,7 +213,7 @@ depositSolToVaultWizard.action("wizard_confirm_deposit", async (ctx) => {
 
     try {
         await ctx.answerCbQuery("Processing deposit...");
-        const processingMsg = await ctx.reply("⏳ Processing your on-chain deposit...");
+        const processingMsg = await ctx.reply("⏳ Processing your deposit...");
 
         const pot = await prismaClient.pot.findUnique({ 
             where: { id: potId },
@@ -226,57 +229,116 @@ depositSolToVaultWizard.action("wizard_confirm_deposit", async (ctx) => {
             return ctx.scene.leave();
         }
 
-        // Import smart contract functions
-        const { depositToPot } = await import("../solana/smartContract");
-        const { PublicKey } = await import("@solana/web3.js");
+        // ========================================
+        // WALLET MODE (Active for Testing)
+        // ========================================
+        const walletData = parseVaultAddress(pot.vaultAddress);
         
-        try {
-            // Get pot seed from database
-            const potSeedPublicKey = new PublicKey(pot.potSeed);
-            
-            // Call smart contract deposit function
-            const { signature, sharesMinted } = await depositToPot(
-                user.privateKey,
-                pot.admin.publicKey,
-                potSeedPublicKey,
-                amount
-            );
+        if (walletData) {
+            // New wallet-based pot
+            try {
+                const userKeypair = Keypair.fromSecretKey(decodeSecretKey(user.privateKey));
+                const potWalletPubkey = new PublicKey(walletData.publicKey);
+                
+                // Simple SOL transfer to pot wallet
+                const transferResult = await transferSol(
+                    userKeypair,
+                    potWalletPubkey,
+                    amount
+                );
 
-            // After successful on-chain deposit, update database
-            const mintedShares = await mintSharesAndDeposit(
-                potId,
-                userId,
-                BigInt(amount * LAMPORTS_PER_SOL),
-            );
-            
-            const newShares = mintedShares.sharesMinted;
-            const totalUserShares = mintedShares.userNewShares;
-            const totalPotShares = mintedShares.newTotalShares;
-
-            const userPercentage = ((Number(totalUserShares) / Number(totalPotShares)) * 100).toFixed(2);
-            const newSharesPercentage = ((Number(newShares) / Number(totalPotShares)) * 100).toFixed(2);
-            
-            await ctx.deleteMessage(processingMsg.message_id);
-            
-            await ctx.replyWithMarkdownV2(
-                `✅ *Deposit Successful\\!*\n\n` +
-                `*Amount Deposited:* ${escapeMarkdownV2Amount(amount)} SOL\n` +
-                `*New Shares Minted:* ${escapeMarkdownV2(newShares.toString())} \\(${escapeMarkdownV2(newSharesPercentage)}%\\)\n` +
-                `*Your Total Shares:* ${escapeMarkdownV2(totalUserShares.toString())} \\(${escapeMarkdownV2(userPercentage)}%\\)\n` +
-                `*Pot Total Shares:* ${escapeMarkdownV2(totalPotShares.toString())}\n\n` +
-                `🔗 [View Transaction](${escapeMarkdownV2(getExplorerUrl(signature))})\n\n` +
-                `_Deposit recorded on\\-chain and in database\\._`,
-                {
-                    link_preview_options: { is_disabled: true },
-                    ...DEFAULT_KEYBOARD
+                if (!transferResult.success) {
+                    throw new Error(transferResult.message);
                 }
-            );
-        } catch (e: any) {
-            console.error("Deposit error:", e);
-            await ctx.deleteMessage(processingMsg.message_id);
-            await ctx.reply(`❌ Deposit failed: ${e.message || 'Unknown error'}`, {
-                ...DEFAULT_KEYBOARD
-            });
+
+                // Update database with shares
+                const mintedShares = await mintSharesAndDeposit(
+                    potId,
+                    userId,
+                    BigInt(amount * LAMPORTS_PER_SOL),
+                );
+                
+                const newShares = mintedShares.sharesMinted;
+                const totalUserShares = mintedShares.userNewShares;
+                const totalPotShares = mintedShares.newTotalShares;
+
+                const userPercentage = ((Number(totalUserShares) / Number(totalPotShares)) * 100).toFixed(2);
+                const newSharesPercentage = ((Number(newShares) / Number(totalPotShares)) * 100).toFixed(2);
+                
+                await ctx.deleteMessage(processingMsg.message_id);
+                
+                await ctx.replyWithMarkdownV2(
+                    `✅ *Deposit Successful\\!*\n\n` +
+                    `*Amount Deposited:* ${escapeMarkdownV2Amount(amount)} SOL\n` +
+                    `*New Shares Minted:* ${escapeMarkdownV2(newShares.toString())} \\(${escapeMarkdownV2(newSharesPercentage)}%\\)\n` +
+                    `*Your Total Shares:* ${escapeMarkdownV2(totalUserShares.toString())} \\(${escapeMarkdownV2(userPercentage)}%\\)\n` +
+                    `*Pot Total Shares:* ${escapeMarkdownV2(totalPotShares.toString())}\n\n` +
+                    `🔗 [View Transaction](${escapeMarkdownV2(transferResult.explorerUrl || '')})\n\n` +
+                    `_Deposit recorded and shares allocated\\._`,
+                    {
+                        link_preview_options: { is_disabled: true },
+                        ...DEFAULT_KEYBOARD
+                    }
+                );
+            } catch (e: any) {
+                console.error("Wallet deposit error:", e);
+                await ctx.deleteMessage(processingMsg.message_id);
+                await ctx.reply(`❌ Deposit failed: ${e.message || 'Unknown error'}`, {
+                    ...DEFAULT_KEYBOARD
+                });
+            }
+        } else {
+            // ========================================
+            // SMART CONTRACT MODE (Fallback)
+            // ========================================
+            const { depositToPot } = await import("../solana/smartContract");
+            const { PublicKey } = await import("@solana/web3.js");
+            
+            try {
+                const potSeedPublicKey = new PublicKey(pot.potSeed);
+                
+                const { signature, sharesMinted } = await depositToPot(
+                    user.privateKey,
+                    pot.admin.publicKey,
+                    potSeedPublicKey,
+                    amount
+                );
+
+                const mintedShares = await mintSharesAndDeposit(
+                    potId,
+                    userId,
+                    BigInt(amount * LAMPORTS_PER_SOL),
+                );
+                
+                const newShares = mintedShares.sharesMinted;
+                const totalUserShares = mintedShares.userNewShares;
+                const totalPotShares = mintedShares.newTotalShares;
+
+                const userPercentage = ((Number(totalUserShares) / Number(totalPotShares)) * 100).toFixed(2);
+                const newSharesPercentage = ((Number(newShares) / Number(totalPotShares)) * 100).toFixed(2);
+                
+                await ctx.deleteMessage(processingMsg.message_id);
+                
+                await ctx.replyWithMarkdownV2(
+                    `✅ *Deposit Successful\\!*\n\n` +
+                    `*Amount Deposited:* ${escapeMarkdownV2Amount(amount)} SOL\n` +
+                    `*New Shares Minted:* ${escapeMarkdownV2(newShares.toString())} \\(${escapeMarkdownV2(newSharesPercentage)}%\\)\n` +
+                    `*Your Total Shares:* ${escapeMarkdownV2(totalUserShares.toString())} \\(${escapeMarkdownV2(userPercentage)}%\\)\n` +
+                    `*Pot Total Shares:* ${escapeMarkdownV2(totalPotShares.toString())}\n\n` +
+                    `🔗 [View Transaction](${escapeMarkdownV2(getExplorerUrl(signature))})\n\n` +
+                    `_Deposit recorded on\\-chain and in database\\._`,
+                    {
+                        link_preview_options: { is_disabled: true },
+                        ...DEFAULT_KEYBOARD
+                    }
+                );
+            } catch (e: any) {
+                console.error("Smart contract deposit error:", e);
+                await ctx.deleteMessage(processingMsg.message_id);
+                await ctx.reply(`❌ Deposit failed: ${e.message || 'Unknown error'}`, {
+                    ...DEFAULT_KEYBOARD
+                });
+            }
         }
     } catch (error) {
         console.error(error);

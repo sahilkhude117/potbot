@@ -1,0 +1,15 @@
+
+import { LAMPORTS_PER_SOL } from "@solana/web3.js";
+
+export const MINIMUM_SOL_RESERVE = 0.005;
+
+
+export const MINIMUM_SOL_RESERVE_LAMPORTS = Math.floor(MINIMUM_SOL_RESERVE * LAMPORTS_PER_SOL);
+
+export const SOL_MINT = "So11111111111111111111111111111111111111112";
+
+export const MINIMUM_DEPOSIT_SOL = 0.001;
+
+export const MINIMUM_WITHDRAWAL_SHARES = BigInt(1);
+
+export const TRADE_LOCK_TIMEOUT_MS = 5 * 60 * 1000;

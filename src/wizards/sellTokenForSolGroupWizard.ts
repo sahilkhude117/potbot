@@ -2,23 +2,24 @@ import { Markup, Scenes } from "telegraf";
 import type { BotContext, SellTokenGroupWizardState } from "../lib/types";
 import { prismaClient } from "../db/prisma";
 import { Keypair, LAMPORTS_PER_SOL, VersionedTransaction, PublicKey } from "@solana/web3.js";
-import { SOL_MINT } from "../lib/statits";
+import { SOL_MINT, TRADE_LOCK_TIMEOUT_MS } from "../lib/constants";
 import { decodeSecretKey, escapeMarkdownV2, escapeMarkdownV2Amount } from "../lib/utils";
 import { getUserTokenAccounts, getTokenMetadata } from "../solana/getTokenAccounts";
 import { executeSwap, getQuote } from "../solana/swapAssetsWithJup";
 import { getConnection, getExplorerUrl } from "../solana/getConnection";
 import { DEFAULT_GROUP_KEYBOARD } from "../keyboards/keyboards";
+import { parseVaultAddress, walletDataToKeypair } from "../lib/walletManager";
+import { getAssociatedTokenAddress } from "@solana/spl-token";
 
 const connection = getConnection();
 
 const tradeLocks = new Map<string, { userId: string, timestamp: number }>();
-const LOCK_TIMEOUT = 5 * 60 * 1000;
 
 function acquireTradeLock(potId: string, userId: string): boolean {
     const existing = tradeLocks.get(potId);
     const now = Date.now();
 
-    if (existing && (now - existing.timestamp > LOCK_TIMEOUT)) {
+    if (existing && (now - existing.timestamp > TRADE_LOCK_TIMEOUT_MS)) {
         tradeLocks.delete(potId);
         return acquireTradeLock(potId, userId);
     }
@@ -43,7 +44,7 @@ function isLocked(potId: string, userId: string): { locked: boolean; lockedBy?: 
     if (!existing) return { locked: false };
     
     const now = Date.now();
-    if (now - existing.timestamp > LOCK_TIMEOUT) {
+    if (now - existing.timestamp > TRADE_LOCK_TIMEOUT_MS) {
         tradeLocks.delete(potId);
         return { locked: false };
     }
@@ -138,30 +139,49 @@ export const sellTokenForSolWizardGroup = new Scenes.WizardScene<BotContext>(
             state.potId = pot.id;
             state.isAdmin = isAdmin;
 
-            // Get pot vault PDA address to check token accounts
-            const { getPotPDA } = await import("../solana/smartContract");
-            
-            let adminPubkey: PublicKey;
-            let potSeedPublicKey: PublicKey;
-            
-            try {
-                adminPubkey = new PublicKey(pot.admin.publicKey);
-                potSeedPublicKey = new PublicKey(pot.potSeed);
-            } catch (error) {
-                releaseTradeLock(pot.id, user.id);
-                await ctx.reply(
-                    "❌ Invalid pot configuration. Please contact the admin.",
-                    { ...DEFAULT_GROUP_KEYBOARD }
-                );
-                return ctx.scene.leave();
-            }
-            
-            const [potPda] = getPotPDA(adminPubkey, potSeedPublicKey);
-
             const loadingMsg = await ctx.reply("⏳ Fetching vault tokens...");
 
-            // Get token accounts owned by pot PDA
-            const tokenAccounts = await getUserTokenAccounts(connection, potPda.toString());
+            // Check which mode to use (wallet or smart contract)
+            const walletData = parseVaultAddress(pot.vaultAddress);
+            let potVaultAddress: string;
+
+            if (walletData) {
+                // Wallet mode - use wallet public key
+                potVaultAddress = walletData.publicKey;
+            } else {
+                // Smart contract mode - get PDA
+                if (!pot.admin?.publicKey || !pot.potSeed) {
+                    releaseTradeLock(pot.id, user.id);
+                    await ctx.reply(
+                        "❌ Pot configuration is incomplete. Please contact the admin.",
+                        { ...DEFAULT_GROUP_KEYBOARD }
+                    );
+                    return ctx.scene.leave();
+                }
+
+                const { getPotPDA } = await import("../solana/smartContract");
+                
+                let adminPubkey: PublicKey;
+                let potSeedPublicKey: PublicKey;
+                
+                try {
+                    adminPubkey = new PublicKey(pot.admin.publicKey);
+                    potSeedPublicKey = new PublicKey(pot.potSeed);
+                } catch (error) {
+                    releaseTradeLock(pot.id, user.id);
+                    await ctx.reply(
+                        "❌ Invalid pot configuration. Please contact the admin.",
+                        { ...DEFAULT_GROUP_KEYBOARD }
+                    );
+                    return ctx.scene.leave();
+                }
+                
+                const [potPda] = getPotPDA(adminPubkey, potSeedPublicKey);
+                potVaultAddress = potPda.toString();
+            }
+
+            // Get token accounts owned by pot vault (works for both modes)
+            const tokenAccounts = await getUserTokenAccounts(connection, potVaultAddress);
 
             await ctx.deleteMessage(loadingMsg.message_id);
 
@@ -477,180 +497,287 @@ sellTokenForSolWizardGroup.action("wizard_confirm_group_sell", async (ctx) => {
 
         const traderKeypair = Keypair.fromSecretKey(decodeSecretKey(user.privateKey));
         const inputMint = new PublicKey(state.tokenMint);
-        const delegateAmount = BigInt(state.quoteData.inAmount);
 
-        // Import smart contract functions
-        const { setSwapDelegate, revokeSwapDelegate } = await import("../solana/smartContract");
-
-        let delegateSet = false;
+        // Check which mode to use (wallet or smart contract)
+        const walletData = parseVaultAddress(pot.vaultAddress);
         let swapSignature: string | null = null;
 
-        try {
-            // Validate pot configuration
-            if (!pot.admin?.publicKey || !pot.potSeed) {
-                throw new Error("Invalid pot configuration");
-            }
+        if (walletData) {
+            // ===== WALLET MODE (Active) =====
+            await ctx.editMessageText("⏳ Executing wallet swap...");
 
-            let potSeedPublicKey: PublicKey;
             try {
-                potSeedPublicKey = new PublicKey(pot.potSeed);
-            } catch (error) {
-                throw new Error("Invalid pot seed");
-            }
+                // Get pot wallet keypair for signing the swap
+                const potKeypair = walletDataToKeypair(walletData);
 
-            // If admin is trading, ensure they're added as a trader on-chain
-            const isAdminTrading = state.userId === pot.adminId;
-            if (isAdminTrading) {
-                try {
-                    // Try to add admin as trader if not already added
-                    const { addTraderOnChain } = await import("../solana/smartContract");
-                    await ctx.editMessageText("⏳ Verifying admin trader status...");
-                    await addTraderOnChain(
-                        adminUser.privateKey,
-                        potSeedPublicKey,
-                        adminUser.publicKey
-                    );
-                    console.log("✅ Admin verified/added as trader");
-                } catch (traderError: any) {
-                    // If already a trader, this will fail - that's okay
-                    if (!traderError.message?.includes("already")) {
-                        console.log("Admin might already be a trader:", traderError.message);
+                // Execute Jupiter swap (signed by pot wallet)
+                const swapTransaction = await executeSwap(
+                    state.quoteData,
+                    potKeypair.publicKey.toString() // pot wallet signs
+                );
+
+                const tx = VersionedTransaction.deserialize(
+                    Uint8Array.from(atob(swapTransaction), c => c.charCodeAt(0))
+                );
+                
+                // Sign with POT wallet's keypair
+                tx.sign([potKeypair]);
+
+                swapSignature = await connection.sendTransaction(tx);
+                console.log(`✅ Swap executed: ${swapSignature}`);
+
+                // Update database with trade record
+                await prismaClient.trade.create({
+                    data: {
+                        potId: state.potId,
+                        traderId: member?.id || pot.adminId,
+                        inMint: state.tokenMint,
+                        inAmount: BigInt(state.quoteData.inAmount),
+                        outMint: SOL_MINT,
+                        outAmount: BigInt(state.quoteData.outAmount),
+                        txSignature: swapSignature,
+                        status: "COMPLETED"
                     }
-                }
+                });
+
+                // Update asset balances
+                await prismaClient.asset.upsert({
+                    where: {
+                        potId_mintAddress: {
+                            potId: state.potId,
+                            mintAddress: SOL_MINT
+                        }
+                    },
+                    update: {
+                        balance: {
+                            increment: BigInt(state.quoteData.outAmount)
+                        }
+                    },
+                    create: {
+                        potId: state.potId,
+                        mintAddress: SOL_MINT,
+                        balance: BigInt(state.quoteData.outAmount)
+                    }
+                });
+
+                await prismaClient.asset.update({
+                    where: {
+                        potId_mintAddress: {
+                            potId: state.potId,
+                            mintAddress: state.tokenMint
+                        }
+                    },
+                    data: {
+                        balance: {
+                            decrement: BigInt(state.quoteData.inAmount)
+                        }
+                    }
+                });
+
+                // Display success message
+                await ctx.deleteMessage(processingMsg.message_id);
+
+                const inputAmount = Number(state.quoteData.inAmount) / Math.pow(10, state.tokenDecimals);
+                const outputAmount = Number(state.quoteData.outAmount) / LAMPORTS_PER_SOL;
+                const usdValue = state.quoteData.swapUsdValue || "0";
+
+                await ctx.replyWithMarkdownV2(
+                    `✅ *Trade Executed Successfully\\!*\n\n` +
+                    `*Vault Sold:* ${escapeMarkdownV2Amount(inputAmount)} ${escapeMarkdownV2(state.tokenSymbol)}\n` +
+                    `*Vault Received:* ≈ ${escapeMarkdownV2Amount(outputAmount)} SOL\n` +
+                    `*Value:* \\$${escapeMarkdownV2(parseFloat(usdValue).toFixed(4))}\n\n` +
+                    `🔗 [View on Solana Explorer](${escapeMarkdownV2(getExplorerUrl(swapSignature))})\n\n` +
+                    `_Trade recorded in pot ledger\\._`,
+                    {
+                        parse_mode: "MarkdownV2",
+                        link_preview_options: { is_disabled: true },
+                        ...DEFAULT_GROUP_KEYBOARD
+                    }
+                );
+
+            } catch (swapError: any) {
+                console.error("Wallet swap error:", swapError);
+                throw swapError;
             }
-            
-            // Step 1: Set swap delegate (ADMIN must call this, not trader)
-            await ctx.editMessageText("⏳ Step 1/3: Setting swap authorization...");
-            await setSwapDelegate(
-                adminUser.privateKey, // Use ADMIN's private key
-                pot.admin.publicKey,
-                potSeedPublicKey,
-                delegateAmount,
-                inputMint
-            );
-            delegateSet = true;
-            console.log("✅ Delegate set successfully");
 
-            // Step 2: Execute Jupiter swap (signed by trader)
-            await ctx.editMessageText("⏳ Step 2/3: Executing swap on Jupiter...");
-            const swapTransaction = await executeSwap(
-                state.quoteData,
-                traderKeypair.publicKey.toString()
-            );
+        } else {
+            // ===== SMART CONTRACT MODE (Fallback) =====
+            await ctx.editMessageText("⏳ Setting up trade authorization...");
 
-            const tx = VersionedTransaction.deserialize(
-                Uint8Array.from(atob(swapTransaction), c => c.charCodeAt(0))
-            );
-            
-            // Sign with TRADER's keypair (not vault)
-            tx.sign([traderKeypair]);
+            const delegateAmount = BigInt(state.quoteData.inAmount);
 
-            swapSignature = await connection.sendTransaction(tx);
-            console.log(`✅ Swap executed: ${swapSignature}`);
+            // Import smart contract functions
+            const { setSwapDelegate, revokeSwapDelegate } = await import("../solana/smartContract");
 
-            // Update database with trade record
-            await prismaClient.trade.create({
-                data: {
-                    potId: state.potId,
-                    traderId: member?.id || pot.adminId,
-                    inMint: state.tokenMint,
-                    inAmount: BigInt(state.quoteData.inAmount),
-                    outMint: SOL_MINT,
-                    outAmount: BigInt(state.quoteData.outAmount),
-                    txSignature: swapSignature,
-                    status: "COMPLETED"
+            let delegateSet = false;
+
+            try {
+                // Validate pot configuration
+                if (!pot.admin?.publicKey || !pot.potSeed) {
+                    throw new Error("Invalid pot configuration");
                 }
-            });
 
-        await prismaClient.asset.upsert({
-            where: {
-                potId_mintAddress: {
-                    potId: state.potId,
-                    mintAddress: SOL_MINT
-                }
-            },
-            update: {
-                balance: {
-                    increment: BigInt(state.quoteData.outAmount)
-                }
-            },
-            create: {
-                potId: state.potId,
-                mintAddress: SOL_MINT,
-                balance: BigInt(state.quoteData.outAmount)
-            }
-        });
-
-        await prismaClient.asset.update({
-            where: {
-                potId_mintAddress: {
-                    potId: state.potId,
-                    mintAddress: state.tokenMint
-                }
-            },
-            data: {
-                balance: {
-                    decrement: BigInt(state.quoteData.inAmount)
-                }
-            }
-        });
-
-            // Display success message
-            await ctx.deleteMessage(processingMsg.message_id);
-
-            const inputAmount = Number(state.quoteData.inAmount) / Math.pow(10, state.tokenDecimals);
-            const outputAmount = Number(state.quoteData.outAmount) / LAMPORTS_PER_SOL;
-            const usdValue = state.quoteData.swapUsdValue || "0";
-
-            await ctx.replyWithMarkdownV2(
-                `✅ *Trade Executed Successfully\\!*\n\n` +
-                `*Vault Sold:* ${escapeMarkdownV2Amount(inputAmount)} ${escapeMarkdownV2(state.tokenSymbol)}\n` +
-                `*Vault Received:* ≈ ${escapeMarkdownV2Amount(outputAmount)} SOL\n` +
-                `*Value:* \\$${escapeMarkdownV2(parseFloat(usdValue).toFixed(4))}\n\n` +
-                `🔗 [View on Solana Explorer](${escapeMarkdownV2(getExplorerUrl(swapSignature))})\n\n` +
-                `_Trade recorded in pot ledger\\. Permissions revoked\\._`,
-                {
-                    parse_mode: "MarkdownV2",
-                    link_preview_options: { is_disabled: true },
-                    ...DEFAULT_GROUP_KEYBOARD
-                }
-            );
-
-        } catch (swapError: any) {
-            console.error("Swap execution error:", swapError);
-            throw swapError;
-        } finally {
-            // Step 3: Always revoke delegate (CRITICAL SECURITY STEP)
-            if (delegateSet) {
+                let potSeedPublicKey: PublicKey;
                 try {
-                    await ctx.editMessageText("⏳ Step 3/3: Revoking swap authorization...");
-                    let potSeedPublicKey: PublicKey;
+                    potSeedPublicKey = new PublicKey(pot.potSeed);
+                } catch (error) {
+                    throw new Error("Invalid pot seed");
+                }
+
+                // If admin is trading, ensure they're added as a trader on-chain
+                const isAdminTrading = state.userId === pot.adminId;
+                if (isAdminTrading) {
                     try {
-                        potSeedPublicKey = new PublicKey(pot.potSeed);
-                    } catch (error) {
-                        throw new Error("Invalid pot seed for revoke");
+                        // Try to add admin as trader if not already added
+                        const { addTraderOnChain } = await import("../solana/smartContract");
+                        await ctx.editMessageText("⏳ Verifying admin trader status...");
+                        await addTraderOnChain(
+                            adminUser.privateKey,
+                            potSeedPublicKey,
+                            adminUser.publicKey
+                        );
+                        console.log("✅ Admin verified/added as trader");
+                    } catch (traderError: any) {
+                        // If already a trader, this will fail - that's okay
+                        if (!traderError.message?.includes("already")) {
+                            console.log("Admin might already be a trader:", traderError.message);
+                        }
                     }
-                    await revokeSwapDelegate(
-                        adminUser.privateKey, // Use ADMIN's private key
-                        pot.admin.publicKey,
-                        potSeedPublicKey,
-                        inputMint
-                    );
-                    console.log("✅ Delegate revoked successfully");
-                } catch (revokeError) {
-                    console.error("🚨 CRITICAL: Failed to revoke delegate:", revokeError);
-                    await ctx.reply(
-                        "⚠️ *CRITICAL WARNING*\n\n" +
-                        "Trade completed but could not revoke permissions\\.\n" +
-                        "Please contact support immediately\\.",
-                        { parse_mode: "MarkdownV2", ...DEFAULT_GROUP_KEYBOARD }
-                    );
+                }
+                
+                // Step 1: Set swap delegate (ADMIN must call this, not trader)
+                await ctx.editMessageText("⏳ Step 1/3: Setting swap authorization...");
+                await setSwapDelegate(
+                    adminUser.privateKey, // Use ADMIN's private key
+                    pot.admin.publicKey,
+                    potSeedPublicKey,
+                    delegateAmount,
+                    inputMint
+                );
+                delegateSet = true;
+                console.log("✅ Delegate set successfully");
+
+                // Step 2: Execute Jupiter swap (signed by trader)
+                await ctx.editMessageText("⏳ Step 2/3: Executing swap on Jupiter...");
+                const swapTransaction = await executeSwap(
+                    state.quoteData,
+                    traderKeypair.publicKey.toString()
+                );
+
+                const tx = VersionedTransaction.deserialize(
+                    Uint8Array.from(atob(swapTransaction), c => c.charCodeAt(0))
+                );
+                
+                // Sign with TRADER's keypair (not vault)
+                tx.sign([traderKeypair]);
+
+                swapSignature = await connection.sendTransaction(tx);
+                console.log(`✅ Swap executed: ${swapSignature}`);
+
+                // Update database with trade record
+                await prismaClient.trade.create({
+                    data: {
+                        potId: state.potId,
+                        traderId: member?.id || pot.adminId,
+                        inMint: state.tokenMint,
+                        inAmount: BigInt(state.quoteData.inAmount),
+                        outMint: SOL_MINT,
+                        outAmount: BigInt(state.quoteData.outAmount),
+                        txSignature: swapSignature,
+                        status: "COMPLETED"
+                    }
+                });
+
+                await prismaClient.asset.upsert({
+                    where: {
+                        potId_mintAddress: {
+                            potId: state.potId,
+                            mintAddress: SOL_MINT
+                        }
+                    },
+                    update: {
+                        balance: {
+                            increment: BigInt(state.quoteData.outAmount)
+                        }
+                    },
+                    create: {
+                        potId: state.potId,
+                        mintAddress: SOL_MINT,
+                        balance: BigInt(state.quoteData.outAmount)
+                    }
+                });
+
+                await prismaClient.asset.update({
+                    where: {
+                        potId_mintAddress: {
+                            potId: state.potId,
+                            mintAddress: state.tokenMint
+                        }
+                    },
+                    data: {
+                        balance: {
+                            decrement: BigInt(state.quoteData.inAmount)
+                        }
+                    }
+                });
+
+                // Display success message
+                await ctx.deleteMessage(processingMsg.message_id);
+
+                const inputAmount = Number(state.quoteData.inAmount) / Math.pow(10, state.tokenDecimals);
+                const outputAmount = Number(state.quoteData.outAmount) / LAMPORTS_PER_SOL;
+                const usdValue = state.quoteData.swapUsdValue || "0";
+
+                await ctx.replyWithMarkdownV2(
+                    `✅ *Trade Executed Successfully\\!*\n\n` +
+                    `*Vault Sold:* ${escapeMarkdownV2Amount(inputAmount)} ${escapeMarkdownV2(state.tokenSymbol)}\n` +
+                    `*Vault Received:* ≈ ${escapeMarkdownV2Amount(outputAmount)} SOL\n` +
+                    `*Value:* \\$${escapeMarkdownV2(parseFloat(usdValue).toFixed(4))}\n\n` +
+                    `🔗 [View on Solana Explorer](${escapeMarkdownV2(getExplorerUrl(swapSignature))})\n\n` +
+                    `_Trade recorded in pot ledger\\. Permissions revoked\\._`,
+                    {
+                        parse_mode: "MarkdownV2",
+                        link_preview_options: { is_disabled: true },
+                        ...DEFAULT_GROUP_KEYBOARD
+                    }
+                );
+
+            } catch (swapError: any) {
+                console.error("Swap execution error:", swapError);
+                throw swapError;
+            } finally {
+                // Step 3: Always revoke delegate (CRITICAL SECURITY STEP)
+                if (delegateSet) {
+                    try {
+                        await ctx.editMessageText("⏳ Step 3/3: Revoking swap authorization...");
+                        let potSeedPublicKey: PublicKey;
+                        try {
+                            potSeedPublicKey = new PublicKey(pot.potSeed);
+                        } catch (error) {
+                            throw new Error("Invalid pot seed for revoke");
+                        }
+                        await revokeSwapDelegate(
+                            adminUser.privateKey, // Use ADMIN's private key
+                            pot.admin.publicKey,
+                            potSeedPublicKey,
+                            inputMint
+                        );
+                        console.log("✅ Delegate revoked successfully");
+                    } catch (revokeError) {
+                        console.error("🚨 CRITICAL: Failed to revoke delegate:", revokeError);
+                        await ctx.reply(
+                            "⚠️ *CRITICAL WARNING*\n\n" +
+                            "Trade completed but could not revoke permissions\\.\n" +
+                            "Please contact support immediately\\.",
+                            { parse_mode: "MarkdownV2", ...DEFAULT_GROUP_KEYBOARD }
+                        );
+                    }
                 }
             }
-
-            // Release off-chain lock
-            releaseTradeLock(state.potId, state.userId);
         }
+
+        // Release trade lock
+        releaseTradeLock(state.potId, state.userId);
     } catch (error: any) {
         console.error("Group swap error:", error);
         
