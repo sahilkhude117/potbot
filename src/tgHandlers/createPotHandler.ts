@@ -38,6 +38,16 @@ import { serializeWalletData } from "../lib/walletManager";
         }
       });
 
+      // Add creator as admin member in Pot_Member table
+      await prismaClient.pot_Member.create({
+        data: {
+          userId: existingUser.id,
+          potId: pot.id,
+          role: "ADMIN",
+          shares: BigInt(0)
+        }
+      });
+
       await ctx.replyWithMarkdownV2(
         `*✅ Created Pot Successfully*\\.
 
