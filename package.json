@@ -5,7 +5,9 @@
   "private": true,
   "scripts": {
     "dev": "bun run --hot src/index.ts",
-    "start": "bun run src/index.ts"
+    "start": "bun run src/index.ts",
+    "migrate:prod": "bunx prisma migrate deploy",
+    "postinstall": "bunx prisma generate"
   },
   "devDependencies": {
     "@types/bun": "latest"
