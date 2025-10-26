@@ -21,7 +21,7 @@ import { serializeWalletData } from "../lib/walletManager";
       // ========================================
       // Create a direct wallet for the pot
       const potWallet = createPotVault();
-      const potSeed = createPotSeed(); // Still need seed for unique identifier
+      const potSeed = createPotSeed();
       
       // Store wallet as JSON in vaultAddress field
       const vaultAddressData = serializeWalletData(potWallet);
