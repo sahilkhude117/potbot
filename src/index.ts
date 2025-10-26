@@ -33,6 +33,27 @@ import { tradersHelpHandler } from "./tgHandlers/tradersHelpHandler";
 import { switchModePermissionedHandler } from "./tgHandlers/swithModePermissionedHandler";
 import { switchModePermissionlessHandler } from "./tgHandlers/switchModePermissionlessHandler";
 
+// Create HTTP server for Render health checks
+const PORT = process.env.PORT || 3000;
+const server = Bun.serve({
+  port: PORT,
+  fetch(req) {
+    const url = new URL(req.url);
+    if (url.pathname === "/health" || url.pathname === "/") {
+      return new Response(JSON.stringify({ 
+        status: "ok", 
+        bot: "running",
+        timestamp: new Date().toISOString()
+      }), {
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+    return new Response("Not Found", { status: 404 });
+  },
+});
+
+console.log(`🌐 HTTP server listening on port ${PORT}`);
+
 const bot = new Telegraf<BotContext>(process.env.TELEGRAM_BOT_TOKEN!)
 
 // Start copy trading service
@@ -158,6 +179,15 @@ bot.launch()
     .then(() => console.log("✅ Bot started successfully"))
     .catch((err) => console.error("❌ Failed to start bot:", err));
 
+// Graceful shutdown handlers
+process.once("SIGINT", () => {
+  console.log("🛑 Shutting down...");
+  bot.stop("SIGINT");
+  server.stop();
+});
 
-process.once("SIGINT", () => bot.stop("SIGINT"));
-process.once("SIGTERM", () => bot.stop("SIGTERM"));
+process.once("SIGTERM", () => {
+  console.log("🛑 Shutting down...");
+  bot.stop("SIGTERM");
+  server.stop();
+});
