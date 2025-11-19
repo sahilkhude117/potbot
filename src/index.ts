@@ -57,8 +57,8 @@ console.log(`🌐 HTTP server listening on port ${PORT}`);
 const bot = new Telegraf<BotContext>(process.env.TELEGRAM_BOT_TOKEN!)
 
 // Start copy trading service
-const copyTradingService = new CopyTradingService(bot as any);
-copyTradingService.start();
+// const copyTradingService = new CopyTradingService(bot as any);
+// copyTradingService.start();
 
 const stage = new Scenes.Stage<BotContext>([
   depositSolToVaultWizard,

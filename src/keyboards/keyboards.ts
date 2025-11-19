@@ -14,9 +14,11 @@ export const DEFAULT_KEYBOARD = Markup.inlineKeyboard([[
 ],[
     Markup.button.callback("Buy Tokens", "buy"),
     Markup.button.callback("Sell Tokens", "sell")
-],[
-    Markup.button.callback("Copy Trading (Beta)", "copy_trading")
-],[
+],
+// ],[
+//     // Markup.button.callback("Copy Trading (Beta)", "copy_trading")
+// ],[
+[
     Markup.button.callback("Recent Transactions", "recent_transactions"),
     Markup.button.callback("View Portfolio", 'portfolio'),
 ]]);
